@@ -1,0 +1,86 @@
+// Matrix Multiplication Compute Shader
+// Computes C = A * B for square matrices
+//
+// Uses tiled algorithm with shared memory for better cache utilization.
+//
+// Usage:
+//   - Binding 0: Matrix A (float[], row-major)
+//   - Binding 1: Matrix B (float[], row-major)
+//   - Binding 2: Matrix C (float[], row-major)
+//   - Push constant: { M, N, K } dimensions
+//
+// Dispatch: ceil(N / 16) x ceil(M / 16) workgroups
+
+#version 450
+
+#define TILE_SIZE 16
+
+layout(local_size_x = TILE_SIZE, local_size_y = TILE_SIZE, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer MatrixA {
+    float data[];
+} A;
+
+layout(set = 0, binding = 1) readonly buffer MatrixB {
+    float data[];
+} B;
+
+layout(set = 0, binding = 2) writeonly buffer MatrixC {
+    float data[];
+} C;
+
+layout(push_constant) uniform PushConstants {
+    uint M;  // Rows of A and C
+    uint N;  // Columns of B and C
+    uint K;  // Columns of A, Rows of B
+} pc;
+
+// Shared memory tiles
+shared float tileA[TILE_SIZE][TILE_SIZE];
+shared float tileB[TILE_SIZE][TILE_SIZE];
+
+void main() {
+    uint row = gl_GlobalInvocationID.y;
+    uint col = gl_GlobalInvocationID.x;
+    uint local_row = gl_LocalInvocationID.y;
+    uint local_col = gl_LocalInvocationID.x;
+
+    float sum = 0.0;
+
+    // Loop over tiles
+    uint num_tiles = (pc.K + TILE_SIZE - 1) / TILE_SIZE;
+
+    for (uint t = 0; t < num_tiles; t++) {
+        // Load tile from A
+        uint a_row = row;
+        uint a_col = t * TILE_SIZE + local_col;
+        if (a_row < pc.M && a_col < pc.K) {
+            tileA[local_row][local_col] = A.data[a_row * pc.K + a_col];
+        } else {
+            tileA[local_row][local_col] = 0.0;
+        }
+
+        // Load tile from B
+        uint b_row = t * TILE_SIZE + local_row;
+        uint b_col = col;
+        if (b_row < pc.K && b_col < pc.N) {
+            tileB[local_row][local_col] = B.data[b_row * pc.N + b_col];
+        } else {
+            tileB[local_row][local_col] = 0.0;
+        }
+
+        barrier();
+
+        // Compute partial dot product
+        for (uint k = 0; k < TILE_SIZE; k++) {
+            sum += tileA[local_row][k] * tileB[k][local_col];
+        }
+
+        barrier();
+    }
+
+    // Store result
+    if (row < pc.M && col < pc.N) {
+        C.data[row * pc.N + col] = sum;
+    }
+}

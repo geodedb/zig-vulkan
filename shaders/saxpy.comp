@@ -1,0 +1,37 @@
+// SAXPY Compute Shader
+// Single-precision A*X Plus Y: Y = alpha * X + Y
+//
+// This is a fundamental BLAS Level 1 operation used in many
+// linear algebra and machine learning algorithms.
+//
+// Usage:
+//   - Binding 0: Input buffer X (float[])
+//   - Binding 1: Input/Output buffer Y (float[])
+//   - Push constant: { alpha, n }
+//
+// Dispatch: ceil(n / 256) workgroups
+
+#version 450
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer InputX {
+    float data[];
+} x_buf;
+
+layout(set = 0, binding = 1) buffer InputOutputY {
+    float data[];
+} y_buf;
+
+layout(push_constant) uniform PushConstants {
+    float alpha;
+    uint n;
+} pc;
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+
+    if (idx < pc.n) {
+        y_buf.data[idx] = pc.alpha * x_buf.data[idx] + y_buf.data[idx];
+    }
+}

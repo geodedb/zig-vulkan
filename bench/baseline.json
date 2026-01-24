@@ -1,0 +1,6 @@
+{
+  "timestamp": 0,
+  "count": 0,
+  "benchmarks": [],
+  "_comment": "This is a placeholder baseline. Run './zig-out/bin/bench --save-baseline' on a GPU-capable system to generate actual baseline values."
+}

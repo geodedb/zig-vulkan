@@ -1,0 +1,34 @@
+// Vector Scale Compute Shader
+// Scales a vector by a scalar: B = A * scale
+//
+// Usage:
+//   - Binding 0: Input buffer A (float[])
+//   - Binding 1: Output buffer B (float[])
+//   - Push constant: { scale, n }
+//
+// Dispatch: ceil(n / 256) workgroups
+
+#version 450
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer Input {
+    float data[];
+} input_buf;
+
+layout(set = 0, binding = 1) writeonly buffer Output {
+    float data[];
+} output_buf;
+
+layout(push_constant) uniform PushConstants {
+    float scale;
+    uint n;
+} pc;
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+
+    if (idx < pc.n) {
+        output_buf.data[idx] = input_buf.data[idx] * pc.scale;
+    }
+}
