@@ -4,6 +4,14 @@ A production-grade GPU compute library for Zig, providing a clean, safe API for 
 
 **Version: 0.6.0**
 
+## Status
+
+| Aspect | Info |
+|--------|------|
+| API Stability | Beta |
+| Zig Version | 0.14.0+ |
+| Platforms | Linux, Windows (Vulkan-capable) |
+
 ## Features
 
 ### Core Features
