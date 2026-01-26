@@ -1,31 +1,38 @@
 # GitLab CI/CD Configuration
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2025 CodePros
-#
-# NOTE: Build/test skipped - requires Zig 0.15.x which is not yet released.
-# Security scanning is enabled.
 
 include:
+  # Zig testing (requires Zig 0.15.x and vulkan runners)
+  - component: gitlab.com/devnw/ci-catalog/zig-test@main
+    inputs:
+      stage: test
+      zig_version: '0.15.2'
+      tags:
+        - company
+        - linux
+        - vulkan
+
   # Security scanning (Advanced SAST enabled by default)
-  - component: gitlab.com/devnw/ci-catalog/security-sast@v1.7.1
+  - component: gitlab.com/devnw/ci-catalog/security-sast@main
     inputs:
       stage: security
-  - component: gitlab.com/devnw/ci-catalog/security-dependency-scanning@v1.7.1
+  - component: gitlab.com/devnw/ci-catalog/security-dependency-scanning@main
     inputs:
       stage: security
-  - component: gitlab.com/devnw/ci-catalog/security-secrets@v1.7.1
+  - component: gitlab.com/devnw/ci-catalog/security-secrets@main
     inputs:
       stage: security
-  - component: gitlab.com/devnw/ci-catalog/security-gitleaks@v1.7.1
+  - component: gitlab.com/devnw/ci-catalog/security-gitleaks@main
 
   # SBOM generation and scanning
-  - component: gitlab.com/devnw/ci-catalog/sbom-generate@v1.7.1
-  - component: gitlab.com/devnw/ci-catalog/sbom-scan@v1.7.1
+  - component: gitlab.com/devnw/ci-catalog/sbom-generate@main
+  - component: gitlab.com/devnw/ci-catalog/sbom-scan@main
     inputs:
       allow_failure: true
 
   # Release creation
-  - component: gitlab.com/devnw/ci-catalog/release-semantic@v1.7.1
+  - component: gitlab.com/devnw/ci-catalog/release-semantic@main
     inputs:
       stage: release
 
@@ -35,6 +42,7 @@ default:
     - linux
 
 stages:
+  - test
   - security
   - sbom
   - release
