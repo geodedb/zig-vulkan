@@ -24,7 +24,18 @@ include:
     inputs:
       allow_failure: true
 
+  # Release creation
+  - component: gitlab.com/devnw/ci-catalog/release-semantic@v1.7.1
+    inputs:
+      stage: release
+
+default:
+  tags:
+    - company
+    - linux
+
 stages:
   - security
   - sbom
+  - release
 
