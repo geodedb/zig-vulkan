@@ -9,8 +9,7 @@ include:
       stage: test
       zig_version: '0.15.2'
       tags:
-        - company
-        - linux
+        - gpu
         - vulkan
 
   # Security scanning (Advanced SAST enabled by default)
