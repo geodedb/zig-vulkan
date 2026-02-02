@@ -17,6 +17,35 @@ pub fn build(b: *std.Build) void {
     const enable_shaderc = b.option(bool, "shaderc", "Enable shaderc for GLSL compilation") orelse false;
     _ = enable_shaderc;
 
+    // Spice parallelism option
+    const enable_spice = b.option(bool, "spice", "Enable spice-based parallelism") orelse true;
+
+    // Build options module
+    const build_options = b.addOptions();
+    build_options.addOption(bool, "enable_spice", enable_spice);
+
+    // Get spice dependency if enabled
+    const spice_mod: ?*std.Build.Module = if (enable_spice) blk: {
+        const spice_dep = b.dependency("spice", .{
+            .target = target,
+            .optimize = optimize,
+        });
+        break :blk spice_dep.module("spice");
+    } else null;
+
+    // Parallel module
+    const parallel_mod = b.addModule("parallel", .{
+        .root_source_file = b.path("src/parallel.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "build_options", .module = build_options.createModule() },
+        },
+    });
+    if (spice_mod) |sm| {
+        parallel_mod.addImport("spice", sm);
+    }
+
     // ==========================================================================
     // Library Module
     // ==========================================================================
@@ -26,6 +55,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .imports = &.{
+            .{ .name = "parallel", .module = parallel_mod },
+        },
     });
 
     // ==========================================================================
