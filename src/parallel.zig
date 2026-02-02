@@ -6,6 +6,54 @@
 //! Provides high-performance parallel implementations for CPU-side
 //! Vulkan operations including shader variant precompilation,
 //! multi-device context creation, and batch command preparation.
+//!
+//! ## Overview
+//!
+//! This module enables parallel processing of Vulkan CPU-side operations
+//! using the spice thread pool. Ideal for game engines and graphics
+//! applications that need to prepare many shader variants or command
+//! buffers simultaneously.
+//!
+//! ## Build Configuration
+//!
+//! Enable: `-Dspice=true` (default)
+//! Disable: `-Dspice=false`
+//!
+//! ## Usage Example
+//!
+//! ```zig
+//! const parallel = @import("parallel.zig");
+//!
+//! // Precompile multiple shader variants in parallel
+//! var variants: [8][]const parallel.SpecValue = undefined;
+//! var results: [8]parallel.ShaderCompileResult = undefined;
+//!
+//! parallel.parallelShaderPrecompile(
+//!     allocator,
+//!     &variants,
+//!     &results,
+//!     myShaderCompiler,
+//! );
+//!
+//! // Initialize multiple Vulkan devices in parallel
+//! var device_configs: [4]parallel.DeviceConfig = undefined;
+//! var device_results: [4]parallel.DeviceInitResult = undefined;
+//!
+//! parallel.parallelDeviceInit(
+//!     allocator,
+//!     &device_configs,
+//!     &device_results,
+//!     myDeviceInitializer,
+//! );
+//! ```
+//!
+//! ## Performance Thresholds
+//!
+//! | Operation        | Threshold   | Sequential Below |
+//! |------------------|-------------|------------------|
+//! | Shader Precompile| 2 variants  | Yes              |
+//! | Device Init      | 2 devices   | Yes              |
+//! | Command Prepare  | 4 batches   | Yes              |
 
 const std = @import("std");
 const build_options = @import("build_options");
@@ -505,5 +553,163 @@ test "parallel context create" {
 
     for (results) |result| {
         try std.testing.expect(result.success);
+    }
+}
+
+test "parallel shader precompile - empty variant" {
+    if (!build_options.enable_spice) return error.SkipZigTest;
+
+    const testCompiler = struct {
+        fn compile(variant: []const SpecValue, allocator: std.mem.Allocator) ShaderCompileResult {
+            _ = allocator;
+            return .{
+                .success = variant.len > 0,
+                .variant_index = 0,
+                .error_msg = if (variant.len == 0) "empty variant" else null,
+            };
+        }
+    }.compile;
+
+    var variants: [4][]const SpecValue = undefined;
+    var results: [4]ShaderCompileResult = undefined;
+
+    for (&variants) |*v| {
+        v.* = &[_]SpecValue{}; // Empty
+    }
+
+    parallelShaderPrecompile(std.testing.allocator, &variants, &results, testCompiler);
+
+    for (results) |result| {
+        try std.testing.expect(!result.success);
+    }
+}
+
+test "parallel context create - invalid device" {
+    if (!build_options.enable_spice) return error.SkipZigTest;
+
+    const testCreator = struct {
+        fn create(device: DeviceInfo, allocator: std.mem.Allocator) ContextCreateResult {
+            _ = allocator;
+            return .{
+                .success = device.physical_device != 0,
+                .context_handle = if (device.physical_device != 0) device.physical_device else null,
+                .error_code = if (device.physical_device == 0) @as(?i32, -1) else null,
+            };
+        }
+    }.create;
+
+    var devices: [4]DeviceInfo = undefined;
+    var results: [4]ContextCreateResult = undefined;
+
+    for (&devices) |*d| {
+        d.* = .{
+            .physical_device = 0, // Invalid
+            .queue_family = 0,
+            .device_name = "Invalid Device",
+        };
+    }
+
+    parallelContextCreate(std.testing.allocator, &devices, &results, testCreator);
+
+    for (results) |result| {
+        try std.testing.expect(!result.success);
+        try std.testing.expectEqual(@as(?i32, -1), result.error_code);
+    }
+}
+
+test "parallel command record" {
+    if (!build_options.enable_spice) return error.SkipZigTest;
+
+    const testRecorder = struct {
+        fn record(input: CommandBufferInput) CommandBufferResult {
+            return .{
+                .success = input.buffer_handle != 0,
+                .error_code = null,
+            };
+        }
+    }.record;
+
+    var inputs: [8]CommandBufferInput = undefined;
+    var results: [8]CommandBufferResult = undefined;
+
+    for (&inputs, 0..) |*input, i| {
+        input.* = .{
+            .buffer_handle = @intCast(i + 1),
+            .dispatch_x = 32,
+            .dispatch_y = 32,
+            .dispatch_z = 1,
+            .pipeline = 100,
+        };
+    }
+
+    parallelCommandRecord(&inputs, &results, testRecorder);
+
+    for (results) |result| {
+        try std.testing.expect(result.success);
+    }
+}
+
+test "parallel buffer copy" {
+    if (!build_options.enable_spice) return error.SkipZigTest;
+
+    const testCopier = struct {
+        fn copy(op: BufferCopyOp) BufferCopyResult {
+            return .{
+                .success = op.size > 0,
+                .bytes_copied = op.size,
+            };
+        }
+    }.copy;
+
+    var ops: [8]BufferCopyOp = undefined;
+    var results: [8]BufferCopyResult = undefined;
+
+    for (&ops, 0..) |*op, i| {
+        op.* = .{
+            .src_buffer = @intCast(i),
+            .dst_buffer = @intCast(i + 100),
+            .src_offset = 0,
+            .dst_offset = 0,
+            .size = 1024,
+        };
+    }
+
+    parallelBufferCopy(&ops, &results, testCopier);
+
+    for (results) |result| {
+        try std.testing.expect(result.success);
+        try std.testing.expectEqual(@as(u64, 1024), result.bytes_copied);
+    }
+}
+
+test "parallel buffer copy - zero size" {
+    if (!build_options.enable_spice) return error.SkipZigTest;
+
+    const testCopier = struct {
+        fn copy(op: BufferCopyOp) BufferCopyResult {
+            return .{
+                .success = op.size > 0,
+                .bytes_copied = op.size,
+            };
+        }
+    }.copy;
+
+    var ops: [4]BufferCopyOp = undefined;
+    var results: [4]BufferCopyResult = undefined;
+
+    for (&ops) |*op| {
+        op.* = .{
+            .src_buffer = 1,
+            .dst_buffer = 2,
+            .src_offset = 0,
+            .dst_offset = 0,
+            .size = 0, // Zero size
+        };
+    }
+
+    parallelBufferCopy(&ops, &results, testCopier);
+
+    for (results) |result| {
+        try std.testing.expect(!result.success);
     }
 }
