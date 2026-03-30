@@ -56,9 +56,8 @@
 //! | Command Prepare  | 4 batches   | Yes              |
 
 const std = @import("std");
-const build_options = @import("vulkan_build_options");
 
-const spice = if (build_options.enable_spice) @import("spice") else struct {
+const spice = if (true) @import("spice") else struct {
     pub const ThreadPool = void;
     pub const Task = void;
     pub fn Future(comptime I: type, comptime O: type) type {
@@ -72,11 +71,11 @@ const spice = if (build_options.enable_spice) @import("spice") else struct {
 // Global Thread Pool
 // ============================================================================
 
-var global_pool: if (build_options.enable_spice) ?spice.ThreadPool else void = if (build_options.enable_spice) null else {};
+var global_pool: if (true) ?spice.ThreadPool else void = if (true) null else {};
 var pool_mutex: std.Thread.Mutex = .{};
 
-pub fn getPool() if (build_options.enable_spice) *spice.ThreadPool else void {
-    if (!build_options.enable_spice) return;
+pub fn getPool() if (true) *spice.ThreadPool else void {
+    // spice always enabled when this module is compiled
 
     pool_mutex.lock();
     defer pool_mutex.unlock();
@@ -89,7 +88,7 @@ pub fn getPool() if (build_options.enable_spice) *spice.ThreadPool else void {
 }
 
 pub fn deinitPool() void {
-    if (!build_options.enable_spice) return;
+    // spice always enabled when this module is compiled
 
     pool_mutex.lock();
     defer pool_mutex.unlock();
@@ -148,7 +147,7 @@ pub fn parallelShaderPrecompile(
 ) void {
     std.debug.assert(variants.len == results.len);
 
-    if (!build_options.enable_spice or variants.len < 2) {
+    if (!true or variants.len < 2) {
         for (variants, 0..) |variant, i| {
             results[i] = compiler(variant, allocator);
         }
@@ -248,7 +247,7 @@ pub fn parallelContextCreate(
 ) void {
     std.debug.assert(devices.len == results.len);
 
-    if (!build_options.enable_spice or devices.len < 2) {
+    if (!true or devices.len < 2) {
         for (devices, 0..) |device, i| {
             results[i] = creator(device, allocator);
         }
@@ -346,7 +345,7 @@ pub fn parallelCommandRecord(
 ) void {
     std.debug.assert(inputs.len == results.len);
 
-    if (!build_options.enable_spice or inputs.len < 4) {
+    if (!true or inputs.len < 4) {
         for (inputs, 0..) |input, i| {
             results[i] = recorder(input);
         }
@@ -441,7 +440,7 @@ pub fn parallelBufferCopy(
 ) void {
     std.debug.assert(ops.len == results.len);
 
-    if (!build_options.enable_spice or ops.len < 4) {
+    if (!true or ops.len < 4) {
         for (ops, 0..) |op, i| {
             results[i] = copier(op);
         }
@@ -494,7 +493,7 @@ fn parallelBufferCopyTask(t: *spice.Task, ctx: BufferCopyContext) void {
 // ============================================================================
 
 test "parallel shader precompile" {
-    if (!build_options.enable_spice) return error.SkipZigTest;
+    // spice always enabled when this module is compiled
 
     const testCompiler = struct {
         fn compile(variant: []const SpecValue, allocator: std.mem.Allocator) ShaderCompileResult {
@@ -525,7 +524,7 @@ test "parallel shader precompile" {
 }
 
 test "parallel context create" {
-    if (!build_options.enable_spice) return error.SkipZigTest;
+    // spice always enabled when this module is compiled
 
     const testCreator = struct {
         fn create(device: DeviceInfo, allocator: std.mem.Allocator) ContextCreateResult {
@@ -557,7 +556,7 @@ test "parallel context create" {
 }
 
 test "parallel shader precompile - empty variant" {
-    if (!build_options.enable_spice) return error.SkipZigTest;
+    // spice always enabled when this module is compiled
 
     const testCompiler = struct {
         fn compile(variant: []const SpecValue, allocator: std.mem.Allocator) ShaderCompileResult {
@@ -585,7 +584,7 @@ test "parallel shader precompile - empty variant" {
 }
 
 test "parallel context create - invalid device" {
-    if (!build_options.enable_spice) return error.SkipZigTest;
+    // spice always enabled when this module is compiled
 
     const testCreator = struct {
         fn create(device: DeviceInfo, allocator: std.mem.Allocator) ContextCreateResult {
@@ -618,7 +617,7 @@ test "parallel context create - invalid device" {
 }
 
 test "parallel command record" {
-    if (!build_options.enable_spice) return error.SkipZigTest;
+    // spice always enabled when this module is compiled
 
     const testRecorder = struct {
         fn record(input: CommandBufferInput) CommandBufferResult {
@@ -650,7 +649,7 @@ test "parallel command record" {
 }
 
 test "parallel buffer copy" {
-    if (!build_options.enable_spice) return error.SkipZigTest;
+    // spice always enabled when this module is compiled
 
     const testCopier = struct {
         fn copy(op: BufferCopyOp) BufferCopyResult {
@@ -683,7 +682,7 @@ test "parallel buffer copy" {
 }
 
 test "parallel buffer copy - zero size" {
-    if (!build_options.enable_spice) return error.SkipZigTest;
+    // spice always enabled when this module is compiled
 
     const testCopier = struct {
         fn copy(op: BufferCopyOp) BufferCopyResult {
