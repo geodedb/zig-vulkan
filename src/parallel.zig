@@ -56,7 +56,7 @@
 //! | Command Prepare  | 4 batches   | Yes              |
 
 const std = @import("std");
-const build_options = @import("build_options");
+const build_options = @import("vulkan_build_options");
 
 const spice = if (build_options.enable_spice) @import("spice") else struct {
     pub const ThreadPool = void;
