@@ -425,7 +425,7 @@ pub fn build(b: *std.Build) void {
         });
 
         // Output path: replace .glsl with .spv
-        const output_name = std.mem.trimRight(u8, shader_src, ".glsl");
+        const output_name = if (std.mem.endsWith(u8, shader_src, ".glsl")) shader_src[0 .. shader_src.len - 5] else shader_src;
         compile_cmd.addArg(b.fmt("{s}.spv", .{output_name}));
         compile_cmd.addFileArg(b.path(shader_src));
 
