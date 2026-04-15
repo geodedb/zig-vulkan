@@ -441,6 +441,8 @@ pub fn build(b: *std.Build) void {
     // ==========================================================================
 
     const clean_step = b.step("clean", "Remove build artifacts");
-    clean_step.dependOn(&b.addRemoveDirTree(b.path("zig-out")).step);
-    clean_step.dependOn(&b.addRemoveDirTree(b.path(".zig-cache")).step);
+    const rm_out = b.addSystemCommand(&.{ "rm", "-rf", "zig-out" });
+    const rm_cache = b.addSystemCommand(&.{ "rm", "-rf", ".zig-cache" });
+    clean_step.dependOn(&rm_out.step);
+    clean_step.dependOn(&rm_cache.step);
 }
