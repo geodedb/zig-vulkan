@@ -51,7 +51,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
         .imports = &.{
-            
+
         },
     });
 
@@ -128,8 +128,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    bench_exe.linkLibC();
-
     const run_bench = b.addRunArtifact(bench_exe);
     if (b.args) |args| {
         run_bench.addArgs(args);
@@ -157,7 +155,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    vector_add_exe.linkLibC();
     b.installArtifact(vector_add_exe);
     examples_step.dependOn(&vector_add_exe.step);
 
@@ -174,7 +171,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    vector_scale_exe.linkLibC();
     b.installArtifact(vector_scale_exe);
     examples_step.dependOn(&vector_scale_exe.step);
 
@@ -191,7 +187,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    probe_exe.linkLibC();
     b.installArtifact(probe_exe);
     examples_step.dependOn(&probe_exe.step);
 
@@ -213,7 +208,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    matrix_multiply_exe.linkLibC();
     b.installArtifact(matrix_multiply_exe);
     examples_step.dependOn(&matrix_multiply_exe.step);
 
@@ -230,7 +224,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    image_processing_exe.linkLibC();
     b.installArtifact(image_processing_exe);
     examples_step.dependOn(&image_processing_exe.step);
 
@@ -247,7 +240,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    ml_inference_exe.linkLibC();
     b.installArtifact(ml_inference_exe);
     examples_step.dependOn(&ml_inference_exe.step);
 
@@ -264,7 +256,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    extensions_exe.linkLibC();
     b.installArtifact(extensions_exe);
     examples_step.dependOn(&extensions_exe.step);
 
@@ -281,7 +272,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    timeline_semaphore_exe.linkLibC();
     b.installArtifact(timeline_semaphore_exe);
     examples_step.dependOn(&timeline_semaphore_exe.step);
 
@@ -298,7 +288,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    cooperative_matrix_exe.linkLibC();
     b.installArtifact(cooperative_matrix_exe);
     examples_step.dependOn(&cooperative_matrix_exe.step);
 
@@ -315,7 +304,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    ray_tracing_exe.linkLibC();
     b.installArtifact(ray_tracing_exe);
     examples_step.dependOn(&ray_tracing_exe.step);
 
@@ -332,7 +320,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    mesh_shader_exe.linkLibC();
     b.installArtifact(mesh_shader_exe);
     examples_step.dependOn(&mesh_shader_exe.step);
 
@@ -349,7 +336,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    multi_device_exe.linkLibC();
     b.installArtifact(multi_device_exe);
     examples_step.dependOn(&multi_device_exe.step);
 
