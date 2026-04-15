@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2024-2025 CodePros
 
-//! Parallel Vulkan operations using spice heartbeat scheduling.
+//! Parallel Vulkan operations using thread-pool batched submission.
 //!
 //! Provides high-performance parallel implementations for CPU-side
 //! Vulkan operations including shader variant precompilation,
@@ -10,14 +10,16 @@
 //! ## Overview
 //!
 //! This module enables parallel processing of Vulkan CPU-side operations
-//! using the spice thread pool. Ideal for game engines and graphics
-//! applications that need to prepare many shader variants or command
-//! buffers simultaneously.
+//! using the devnw thread-pool. Each parallel function fans out independent
+//! work items as a flat batch of tasks (up to MAX_CHUNKS chunks) via
+//! submitBatch + WaitGroup, then waits for completion.  If the pool is not
+//! available or submission fails the operation falls back to sequential
+//! execution on the caller's thread.
 //!
 //! ## Build Configuration
 //!
-//! Enable: `-Dspice=true` (default)
-//! Disable: `-Dspice=false`
+//! Enable: `-Dthread_pool=true` (default)
+//! Disable: `-Dthread_pool=false`
 //!
 //! ## Usage Example
 //!
@@ -56,40 +58,30 @@
 //! | Command Prepare  | 4 batches   | Yes              |
 
 const std = @import("std");
+const tp = @import("thread_pool");
 
-const spice = if (true) @import("spice") else struct {
-    pub const ThreadPool = void;
-    pub const Task = void;
-    pub fn Future(comptime I: type, comptime O: type) type {
-        _ = I;
-        _ = O;
-        return void;
-    }
-};
+/// Maximum number of parallel chunks any fan-out operation will create.
+const MAX_CHUNKS: usize = 64;
 
 // ============================================================================
 // Global Thread Pool
 // ============================================================================
 
-var global_pool: if (true) ?spice.ThreadPool else void = if (true) null else {};
+var global_pool: ?tp.ThreadPool = null;
 var pool_mutex: std.Thread.Mutex = .{};
 
-pub fn getPool() if (true) *spice.ThreadPool else void {
-    // spice always enabled when this module is compiled
-
+pub fn getPool() *tp.ThreadPool {
     pool_mutex.lock();
     defer pool_mutex.unlock();
 
     if (global_pool == null) {
-        global_pool = spice.ThreadPool.init(std.heap.page_allocator);
-        global_pool.?.start(.{});
+        global_pool = tp.ThreadPool.init(std.heap.page_allocator, .{}) catch
+            @panic("thread-pool: failed to init global pool");
     }
     return &global_pool.?;
 }
 
 pub fn deinitPool() void {
-    // spice always enabled when this module is compiled
-
     pool_mutex.lock();
     defer pool_mutex.unlock();
 
@@ -119,13 +111,20 @@ pub const ShaderCompileResult = struct {
 /// Shader compiler function type
 pub const ShaderCompiler = *const fn (variant: []const SpecValue, allocator: std.mem.Allocator) ShaderCompileResult;
 
-/// Context for parallel shader compilation
-pub const ShaderCompileContext = struct {
+/// Per-chunk context for parallel shader compilation
+const ShaderChunkCtx = struct {
     variants: []const []const SpecValue,
     results: []ShaderCompileResult,
     compiler: ShaderCompiler,
     allocator: std.mem.Allocator,
 };
+
+fn shaderChunkTask(raw: *anyopaque, _: *tp.TaskContext) void {
+    const ctx: *ShaderChunkCtx = @ptrCast(@alignCast(raw));
+    for (ctx.variants, 0..) |variant, i| {
+        ctx.results[i] = ctx.compiler(variant, ctx.allocator);
+    }
+}
 
 /// Precompile multiple shader variants in parallel.
 ///
@@ -147,55 +146,41 @@ pub fn parallelShaderPrecompile(
 ) void {
     std.debug.assert(variants.len == results.len);
 
-    if (!true or variants.len < 2) {
+    if (variants.len < 2) {
         for (variants, 0..) |variant, i| {
             results[i] = compiler(variant, allocator);
         }
         return;
     }
 
-    const pool = getPool();
-    const ctx = ShaderCompileContext{
-        .variants = variants,
-        .results = results,
-        .compiler = compiler,
-        .allocator = allocator,
-    };
-    _ = pool.call(void, parallelShaderCompileTask, ctx);
-}
+    const n_chunks = @min(variants.len, MAX_CHUNKS);
+    var chunk_ctxs: [MAX_CHUNKS]ShaderChunkCtx = undefined;
+    var batch: [MAX_CHUNKS]tp.BatchTask = undefined;
 
-fn parallelShaderCompileTask(t: *spice.Task, ctx: ShaderCompileContext) void {
-    const variants = ctx.variants;
-    const results = ctx.results;
+    const chunk_size = variants.len / n_chunks;
+    var offset: usize = 0;
+    var n: usize = 0;
+    while (n < n_chunks and offset < variants.len) : (n += 1) {
+        const end = if (n == n_chunks - 1) variants.len else offset + chunk_size;
+        chunk_ctxs[n] = .{
+            .variants = variants[offset..end],
+            .results = results[offset..end],
+            .compiler = compiler,
+            .allocator = allocator,
+        };
+        batch[n] = .{ .task_fn = shaderChunkTask, .ctx = &chunk_ctxs[n] };
+        offset = end;
+    }
 
-    if (variants.len < 2) {
+    var wg = getPool().waitGroup();
+    _ = getPool().submitBatch(batch[0..n], .{ .wait_group = &wg }) catch {
+        // Submission failed — fall back to sequential execution.
         for (variants, 0..) |variant, i| {
-            results[i] = ctx.compiler(variant, ctx.allocator);
+            results[i] = compiler(variant, allocator);
         }
         return;
-    }
-
-    const mid = variants.len / 2;
-    const left_ctx = ShaderCompileContext{
-        .variants = variants[0..mid],
-        .results = results[0..mid],
-        .compiler = ctx.compiler,
-        .allocator = ctx.allocator,
     };
-    const right_ctx = ShaderCompileContext{
-        .variants = variants[mid..],
-        .results = results[mid..],
-        .compiler = ctx.compiler,
-        .allocator = ctx.allocator,
-    };
-
-    var fut = spice.Future(ShaderCompileContext, void).init();
-    fut.fork(t, parallelShaderCompileTask, right_ctx);
-
-    t.call(void, parallelShaderCompileTask, left_ctx);
-    if (fut.join(t) == null) {
-        t.call(void, parallelShaderCompileTask, right_ctx);
-    }
+    wg.wait();
 }
 
 // ============================================================================
@@ -219,13 +204,20 @@ pub const ContextCreateResult = struct {
 /// Context creator function type
 pub const ContextCreator = *const fn (device: DeviceInfo, allocator: std.mem.Allocator) ContextCreateResult;
 
-/// Context for parallel device context creation
-pub const DeviceContextCreateContext = struct {
+/// Per-chunk context for parallel device context creation
+const ContextChunkCtx = struct {
     devices: []const DeviceInfo,
     results: []ContextCreateResult,
     creator: ContextCreator,
     allocator: std.mem.Allocator,
 };
+
+fn contextChunkTask(raw: *anyopaque, _: *tp.TaskContext) void {
+    const ctx: *ContextChunkCtx = @ptrCast(@alignCast(raw));
+    for (ctx.devices, 0..) |device, i| {
+        ctx.results[i] = ctx.creator(device, ctx.allocator);
+    }
+}
 
 /// Create contexts for multiple GPU devices in parallel.
 ///
@@ -247,55 +239,40 @@ pub fn parallelContextCreate(
 ) void {
     std.debug.assert(devices.len == results.len);
 
-    if (!true or devices.len < 2) {
+    if (devices.len < 2) {
         for (devices, 0..) |device, i| {
             results[i] = creator(device, allocator);
         }
         return;
     }
 
-    const pool = getPool();
-    const ctx = DeviceContextCreateContext{
-        .devices = devices,
-        .results = results,
-        .creator = creator,
-        .allocator = allocator,
-    };
-    _ = pool.call(void, parallelContextCreateTask, ctx);
-}
+    const n_chunks = @min(devices.len, MAX_CHUNKS);
+    var chunk_ctxs: [MAX_CHUNKS]ContextChunkCtx = undefined;
+    var batch: [MAX_CHUNKS]tp.BatchTask = undefined;
 
-fn parallelContextCreateTask(t: *spice.Task, ctx: DeviceContextCreateContext) void {
-    const devices = ctx.devices;
-    const results = ctx.results;
+    const chunk_size = devices.len / n_chunks;
+    var offset: usize = 0;
+    var n: usize = 0;
+    while (n < n_chunks and offset < devices.len) : (n += 1) {
+        const end = if (n == n_chunks - 1) devices.len else offset + chunk_size;
+        chunk_ctxs[n] = .{
+            .devices = devices[offset..end],
+            .results = results[offset..end],
+            .creator = creator,
+            .allocator = allocator,
+        };
+        batch[n] = .{ .task_fn = contextChunkTask, .ctx = &chunk_ctxs[n] };
+        offset = end;
+    }
 
-    if (devices.len < 2) {
+    var wg = getPool().waitGroup();
+    _ = getPool().submitBatch(batch[0..n], .{ .wait_group = &wg }) catch {
         for (devices, 0..) |device, i| {
-            results[i] = ctx.creator(device, ctx.allocator);
+            results[i] = creator(device, allocator);
         }
         return;
-    }
-
-    const mid = devices.len / 2;
-    const left_ctx = DeviceContextCreateContext{
-        .devices = devices[0..mid],
-        .results = results[0..mid],
-        .creator = ctx.creator,
-        .allocator = ctx.allocator,
     };
-    const right_ctx = DeviceContextCreateContext{
-        .devices = devices[mid..],
-        .results = results[mid..],
-        .creator = ctx.creator,
-        .allocator = ctx.allocator,
-    };
-
-    var fut = spice.Future(DeviceContextCreateContext, void).init();
-    fut.fork(t, parallelContextCreateTask, right_ctx);
-
-    t.call(void, parallelContextCreateTask, left_ctx);
-    if (fut.join(t) == null) {
-        t.call(void, parallelContextCreateTask, right_ctx);
-    }
+    wg.wait();
 }
 
 // ============================================================================
@@ -320,12 +297,19 @@ pub const CommandBufferResult = struct {
 /// Command recorder function type
 pub const CommandRecorder = *const fn (input: CommandBufferInput) CommandBufferResult;
 
-/// Context for parallel command recording
-pub const CommandRecordContext = struct {
+/// Per-chunk context for parallel command recording
+const CommandChunkCtx = struct {
     inputs: []const CommandBufferInput,
     results: []CommandBufferResult,
     recorder: CommandRecorder,
 };
+
+fn commandChunkTask(raw: *anyopaque, _: *tp.TaskContext) void {
+    const ctx: *CommandChunkCtx = @ptrCast(@alignCast(raw));
+    for (ctx.inputs, 0..) |input, i| {
+        ctx.results[i] = ctx.recorder(input);
+    }
+}
 
 /// Record multiple command buffers in parallel.
 ///
@@ -345,52 +329,39 @@ pub fn parallelCommandRecord(
 ) void {
     std.debug.assert(inputs.len == results.len);
 
-    if (!true or inputs.len < 4) {
+    if (inputs.len < 4) {
         for (inputs, 0..) |input, i| {
             results[i] = recorder(input);
         }
         return;
     }
 
-    const pool = getPool();
-    const ctx = CommandRecordContext{
-        .inputs = inputs,
-        .results = results,
-        .recorder = recorder,
-    };
-    _ = pool.call(void, parallelCommandRecordTask, ctx);
-}
+    const n_chunks = @min(inputs.len, MAX_CHUNKS);
+    var chunk_ctxs: [MAX_CHUNKS]CommandChunkCtx = undefined;
+    var batch: [MAX_CHUNKS]tp.BatchTask = undefined;
 
-fn parallelCommandRecordTask(t: *spice.Task, ctx: CommandRecordContext) void {
-    const inputs = ctx.inputs;
-    const results = ctx.results;
+    const chunk_size = inputs.len / n_chunks;
+    var offset: usize = 0;
+    var n: usize = 0;
+    while (n < n_chunks and offset < inputs.len) : (n += 1) {
+        const end = if (n == n_chunks - 1) inputs.len else offset + chunk_size;
+        chunk_ctxs[n] = .{
+            .inputs = inputs[offset..end],
+            .results = results[offset..end],
+            .recorder = recorder,
+        };
+        batch[n] = .{ .task_fn = commandChunkTask, .ctx = &chunk_ctxs[n] };
+        offset = end;
+    }
 
-    if (inputs.len < 2) {
+    var wg = getPool().waitGroup();
+    _ = getPool().submitBatch(batch[0..n], .{ .wait_group = &wg }) catch {
         for (inputs, 0..) |input, i| {
-            results[i] = ctx.recorder(input);
+            results[i] = recorder(input);
         }
         return;
-    }
-
-    const mid = inputs.len / 2;
-    const left_ctx = CommandRecordContext{
-        .inputs = inputs[0..mid],
-        .results = results[0..mid],
-        .recorder = ctx.recorder,
     };
-    const right_ctx = CommandRecordContext{
-        .inputs = inputs[mid..],
-        .results = results[mid..],
-        .recorder = ctx.recorder,
-    };
-
-    var fut = spice.Future(CommandRecordContext, void).init();
-    fut.fork(t, parallelCommandRecordTask, right_ctx);
-
-    t.call(void, parallelCommandRecordTask, left_ctx);
-    if (fut.join(t) == null) {
-        t.call(void, parallelCommandRecordTask, right_ctx);
-    }
+    wg.wait();
 }
 
 // ============================================================================
@@ -415,12 +386,19 @@ pub const BufferCopyResult = struct {
 /// Buffer copier function type
 pub const BufferCopier = *const fn (op: BufferCopyOp) BufferCopyResult;
 
-/// Context for parallel buffer copies
-pub const BufferCopyContext = struct {
+/// Per-chunk context for parallel buffer copies
+const BufferCopyChunkCtx = struct {
     ops: []const BufferCopyOp,
     results: []BufferCopyResult,
     copier: BufferCopier,
 };
+
+fn bufferCopyChunkTask(raw: *anyopaque, _: *tp.TaskContext) void {
+    const ctx: *BufferCopyChunkCtx = @ptrCast(@alignCast(raw));
+    for (ctx.ops, 0..) |op, i| {
+        ctx.results[i] = ctx.copier(op);
+    }
+}
 
 /// Copy multiple buffers in parallel.
 ///
@@ -440,52 +418,39 @@ pub fn parallelBufferCopy(
 ) void {
     std.debug.assert(ops.len == results.len);
 
-    if (!true or ops.len < 4) {
+    if (ops.len < 4) {
         for (ops, 0..) |op, i| {
             results[i] = copier(op);
         }
         return;
     }
 
-    const pool = getPool();
-    const ctx = BufferCopyContext{
-        .ops = ops,
-        .results = results,
-        .copier = copier,
-    };
-    _ = pool.call(void, parallelBufferCopyTask, ctx);
-}
+    const n_chunks = @min(ops.len, MAX_CHUNKS);
+    var chunk_ctxs: [MAX_CHUNKS]BufferCopyChunkCtx = undefined;
+    var batch: [MAX_CHUNKS]tp.BatchTask = undefined;
 
-fn parallelBufferCopyTask(t: *spice.Task, ctx: BufferCopyContext) void {
-    const ops = ctx.ops;
-    const results = ctx.results;
+    const chunk_size = ops.len / n_chunks;
+    var offset: usize = 0;
+    var n: usize = 0;
+    while (n < n_chunks and offset < ops.len) : (n += 1) {
+        const end = if (n == n_chunks - 1) ops.len else offset + chunk_size;
+        chunk_ctxs[n] = .{
+            .ops = ops[offset..end],
+            .results = results[offset..end],
+            .copier = copier,
+        };
+        batch[n] = .{ .task_fn = bufferCopyChunkTask, .ctx = &chunk_ctxs[n] };
+        offset = end;
+    }
 
-    if (ops.len < 2) {
+    var wg = getPool().waitGroup();
+    _ = getPool().submitBatch(batch[0..n], .{ .wait_group = &wg }) catch {
         for (ops, 0..) |op, i| {
-            results[i] = ctx.copier(op);
+            results[i] = copier(op);
         }
         return;
-    }
-
-    const mid = ops.len / 2;
-    const left_ctx = BufferCopyContext{
-        .ops = ops[0..mid],
-        .results = results[0..mid],
-        .copier = ctx.copier,
     };
-    const right_ctx = BufferCopyContext{
-        .ops = ops[mid..],
-        .results = results[mid..],
-        .copier = ctx.copier,
-    };
-
-    var fut = spice.Future(BufferCopyContext, void).init();
-    fut.fork(t, parallelBufferCopyTask, right_ctx);
-
-    t.call(void, parallelBufferCopyTask, left_ctx);
-    if (fut.join(t) == null) {
-        t.call(void, parallelBufferCopyTask, right_ctx);
-    }
+    wg.wait();
 }
 
 // ============================================================================
@@ -493,8 +458,6 @@ fn parallelBufferCopyTask(t: *spice.Task, ctx: BufferCopyContext) void {
 // ============================================================================
 
 test "parallel shader precompile" {
-    // spice always enabled when this module is compiled
-
     const testCompiler = struct {
         fn compile(variant: []const SpecValue, allocator: std.mem.Allocator) ShaderCompileResult {
             _ = allocator;
@@ -524,8 +487,6 @@ test "parallel shader precompile" {
 }
 
 test "parallel context create" {
-    // spice always enabled when this module is compiled
-
     const testCreator = struct {
         fn create(device: DeviceInfo, allocator: std.mem.Allocator) ContextCreateResult {
             _ = allocator;
@@ -556,8 +517,6 @@ test "parallel context create" {
 }
 
 test "parallel shader precompile - empty variant" {
-    // spice always enabled when this module is compiled
-
     const testCompiler = struct {
         fn compile(variant: []const SpecValue, allocator: std.mem.Allocator) ShaderCompileResult {
             _ = allocator;
@@ -584,8 +543,6 @@ test "parallel shader precompile - empty variant" {
 }
 
 test "parallel context create - invalid device" {
-    // spice always enabled when this module is compiled
-
     const testCreator = struct {
         fn create(device: DeviceInfo, allocator: std.mem.Allocator) ContextCreateResult {
             _ = allocator;
@@ -617,8 +574,6 @@ test "parallel context create - invalid device" {
 }
 
 test "parallel command record" {
-    // spice always enabled when this module is compiled
-
     const testRecorder = struct {
         fn record(input: CommandBufferInput) CommandBufferResult {
             return .{
@@ -649,8 +604,6 @@ test "parallel command record" {
 }
 
 test "parallel buffer copy" {
-    // spice always enabled when this module is compiled
-
     const testCopier = struct {
         fn copy(op: BufferCopyOp) BufferCopyResult {
             return .{
@@ -682,8 +635,6 @@ test "parallel buffer copy" {
 }
 
 test "parallel buffer copy - zero size" {
-    // spice always enabled when this module is compiled
-
     const testCopier = struct {
         fn copy(op: BufferCopyOp) BufferCopyResult {
             return .{
