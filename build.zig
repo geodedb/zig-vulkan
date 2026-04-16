@@ -53,6 +53,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{},
     });
+    if (parallel_mod) |pm| vulkan_mod.addImport("parallel", pm);
 
     // ==========================================================================
     // Static Library (optional)
@@ -68,6 +69,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
+    if (parallel_mod) |pm| lib.root_module.addImport("parallel", pm);
 
     b.installArtifact(lib);
 
@@ -86,6 +88,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
+    if (parallel_mod) |pm| lib_tests.root_module.addImport("parallel", pm);
     const run_lib_tests = b.addRunArtifact(lib_tests);
     test_step.dependOn(&run_lib_tests.step);
 
@@ -402,6 +405,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    if (parallel_mod) |pm| docs.root_module.addImport("parallel", pm);
 
     const install_docs = b.addInstallDirectory(.{
         .source_dir = docs.getEmittedDocs(),

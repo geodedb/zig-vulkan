@@ -183,6 +183,9 @@ pub const usage_pools = @import("memory/usage_pools.zig");
 pub const batch_command = @import("command/batch.zig");
 pub const shader_variants = @import("pipeline/variants.zig");
 
+/// Parallel operations (requires `thread_pool`).
+pub const parallel = @import("parallel");
+
 // =============================================================================
 // Top-level API (convenience re-exports)
 // =============================================================================
@@ -470,4 +473,13 @@ test "library version is valid" {
 test "isAvailable does not panic" {
     // This should never panic, regardless of Vulkan availability
     _ = isAvailable();
+}
+
+test "parallel re-export is reachable" {
+    // Smoke test: verify parallel.zig is reachable through the public
+    // vulkan root module. Parallel Vulkan ops need a real VkDevice etc.
+    // which is impractical in a unit test, so we just assert the pool
+    // lifecycle entry points are exposed and `deinitPool()` is safe.
+    _ = @TypeOf(parallel.getPool);
+    parallel.deinitPool();
 }
