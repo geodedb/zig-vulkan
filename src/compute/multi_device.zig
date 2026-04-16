@@ -225,9 +225,9 @@ pub const MultiDeviceContext = struct {
         const global = loader.GlobalDispatch.load(base) catch return err.Error.FunctionNotFound;
 
         // Create instance
-        var extensions = std.ArrayListUnmanaged([*:0]const u8){};
+        var extensions = std.ArrayListUnmanaged([*:0]const u8).empty;
         defer extensions.deinit(allocator);
-        var layers = std.ArrayListUnmanaged([*:0]const u8){};
+        var layers = std.ArrayListUnmanaged([*:0]const u8).empty;
         defer layers.deinit(allocator);
 
         if (options.enable_validation) {

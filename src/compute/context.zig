@@ -441,9 +441,9 @@ pub const Context = struct {
         }
 
         // Prepare extensions and layers
-        var extensions = std.ArrayListUnmanaged([*:0]const u8){};
+        var extensions = std.ArrayListUnmanaged([*:0]const u8).empty;
         defer extensions.deinit(allocator);
-        var layers = std.ArrayListUnmanaged([*:0]const u8){};
+        var layers = std.ArrayListUnmanaged([*:0]const u8).empty;
         defer layers.deinit(allocator);
 
         if (options.enable_validation) {

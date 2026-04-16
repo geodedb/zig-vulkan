@@ -246,7 +246,7 @@ pub const TemplateBuilder = struct {
     pub fn init(allocator: std.mem.Allocator) Self {
         return .{
             .allocator = allocator,
-            .entries = .{},
+            .entries = .empty,
         };
     }
 

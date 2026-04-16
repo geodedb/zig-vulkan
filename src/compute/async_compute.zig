@@ -811,7 +811,7 @@ pub const SyncManager = struct {
 
     /// Clear all sync points for a frame (when reusing)
     pub fn clearFrame(self: *Self, frame_index: u32) void {
-        var to_remove = std.ArrayListUnmanaged([]const u8){};
+        var to_remove = std.ArrayListUnmanaged([]const u8).empty;
         defer to_remove.deinit(self.allocator);
 
         var iter = self.sync_points.iterator();

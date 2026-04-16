@@ -128,7 +128,7 @@ pub const MockContext = struct {
     heaps: [16]MockMemoryHeap = undefined,
 
     // Error injection
-    injected_errors: std.ArrayListUnmanaged(ErrorInjection) = .{},
+    injected_errors: std.ArrayListUnmanaged(ErrorInjection) = .empty,
 
     // Statistics
     stats: MockStats = .{},

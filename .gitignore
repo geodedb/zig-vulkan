@@ -84,6 +84,7 @@ zig-out/**/*.xml
 .zig-cache/
 zig-cache/
 zig-out/
+zig-pkg/
 /status_new*
 test_logs/
 

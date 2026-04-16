@@ -127,8 +127,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    bench_exe.linkLibC();
-
     const run_bench = b.addRunArtifact(bench_exe);
     if (b.args) |args| {
         run_bench.addArgs(args);
@@ -156,7 +154,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    vector_add_exe.linkLibC();
+
     b.installArtifact(vector_add_exe);
     examples_step.dependOn(&vector_add_exe.step);
 
@@ -173,7 +171,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    vector_scale_exe.linkLibC();
+
     b.installArtifact(vector_scale_exe);
     examples_step.dependOn(&vector_scale_exe.step);
 
@@ -190,7 +188,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    probe_exe.linkLibC();
+
     b.installArtifact(probe_exe);
     examples_step.dependOn(&probe_exe.step);
 
@@ -212,7 +210,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    matrix_multiply_exe.linkLibC();
+
     b.installArtifact(matrix_multiply_exe);
     examples_step.dependOn(&matrix_multiply_exe.step);
 
@@ -229,7 +227,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    image_processing_exe.linkLibC();
+
     b.installArtifact(image_processing_exe);
     examples_step.dependOn(&image_processing_exe.step);
 
@@ -246,7 +244,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    ml_inference_exe.linkLibC();
+
     b.installArtifact(ml_inference_exe);
     examples_step.dependOn(&ml_inference_exe.step);
 
@@ -263,7 +261,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    extensions_exe.linkLibC();
+
     b.installArtifact(extensions_exe);
     examples_step.dependOn(&extensions_exe.step);
 
@@ -280,7 +278,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    timeline_semaphore_exe.linkLibC();
+
     b.installArtifact(timeline_semaphore_exe);
     examples_step.dependOn(&timeline_semaphore_exe.step);
 
@@ -297,7 +295,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    cooperative_matrix_exe.linkLibC();
+
     b.installArtifact(cooperative_matrix_exe);
     examples_step.dependOn(&cooperative_matrix_exe.step);
 
@@ -314,7 +312,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    ray_tracing_exe.linkLibC();
+
     b.installArtifact(ray_tracing_exe);
     examples_step.dependOn(&ray_tracing_exe.step);
 
@@ -331,7 +329,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    mesh_shader_exe.linkLibC();
+
     b.installArtifact(mesh_shader_exe);
     examples_step.dependOn(&mesh_shader_exe.step);
 
@@ -348,7 +346,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    multi_device_exe.linkLibC();
+
     b.installArtifact(multi_device_exe);
     examples_step.dependOn(&multi_device_exe.step);
 
@@ -438,7 +436,7 @@ pub fn build(b: *std.Build) void {
         });
 
         // Output path: replace .glsl with .spv
-        const output_name = std.mem.trimRight(u8, shader_src, ".glsl");
+        const output_name = std.mem.cutSuffix(u8, shader_src, ".glsl") orelse shader_src;
         compile_cmd.addArg(b.fmt("{s}.spv", .{output_name}));
         compile_cmd.addFileArg(b.path(shader_src));
 
@@ -454,6 +452,8 @@ pub fn build(b: *std.Build) void {
     // ==========================================================================
 
     const clean_step = b.step("clean", "Remove build artifacts");
-    clean_step.dependOn(&b.addRemoveDirTree(b.path("zig-out")).step);
-    clean_step.dependOn(&b.addRemoveDirTree(b.path(".zig-cache")).step);
+    const rm_out = b.addSystemCommand(&.{ "rm", "-rf", "zig-out" });
+    clean_step.dependOn(&rm_out.step);
+    const rm_cache = b.addSystemCommand(&.{ "rm", "-rf", ".zig-cache" });
+    clean_step.dependOn(&rm_cache.step);
 }

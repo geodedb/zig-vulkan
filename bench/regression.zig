@@ -26,6 +26,16 @@
 
 const std = @import("std");
 
+/// Zig 0.16.0 compat: libc-based monotonic timestamp (ns)
+fn nanoTimestamp() i128 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
+}
+fn getIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
 /// Configuration for regression detection
 pub const RegressionConfig = struct {
     /// Path to the baseline file (JSON)
@@ -121,7 +131,7 @@ pub const RegressionReport = struct {
 
     pub fn init(allocator: std.mem.Allocator, config: RegressionConfig) RegressionReport {
         return .{
-            .comparisons = .{},
+            .comparisons = .empty,
             .allocator = allocator,
             .config = config,
         };
@@ -232,6 +242,26 @@ pub const RegressionReport = struct {
 
         try writer.writeAll("  ]\n}\n");
     }
+
+    pub fn printJson(self: RegressionReport) void {
+        std.debug.print("{{\n", .{});
+        std.debug.print("  \"threshold_regression\": {d:.2},\n", .{self.config.regression_threshold});
+        std.debug.print("  \"threshold_improvement\": {d:.2},\n", .{self.config.improvement_threshold});
+        std.debug.print("  \"has_regressions\": {},\n", .{self.hasRegressions()});
+        std.debug.print("  \"comparisons\": [\n", .{});
+
+        for (self.comparisons.items, 0..) |c, i| {
+            std.debug.print("    {{\n", .{});
+            std.debug.print("      \"name\": \"{s}\",\n", .{c.name});
+            std.debug.print("      \"baseline_ns\": {},\n", .{c.baseline_ns});
+            std.debug.print("      \"current_ns\": {},\n", .{c.current_ns});
+            std.debug.print("      \"change_pct\": {d:.4},\n", .{c.change_pct});
+            std.debug.print("      \"status\": \"{s}\"\n", .{@tagName(c.status)});
+            std.debug.print("    }}{s}\n", .{if (i < self.comparisons.items.len - 1) "," else ""});
+        }
+
+        std.debug.print("  ]\n}}\n", .{});
+    }
 };
 
 /// Baseline entry for a single benchmark
@@ -257,7 +287,7 @@ pub const RegressionTracker = struct {
         var self = Self{
             .allocator = allocator,
             .config = config,
-            .baseline = .{},
+            .baseline = .empty,
             .baseline_loaded = false,
         };
 
@@ -281,10 +311,14 @@ pub const RegressionTracker = struct {
 
     /// Load baseline from JSON file
     pub fn loadBaseline(self: *Self) !void {
-        const file = try std.fs.cwd().openFile(self.config.baseline_path, .{});
-        defer file.close();
+        const io = getIo();
+        const dir = std.Io.Dir.cwd();
+        var file = try dir.openFile(io, self.config.baseline_path, .{});
+        defer file.close(io);
 
-        const content = try file.readToEndAlloc(self.allocator, 10 * 1024 * 1024);
+        var buf: [4096]u8 = undefined;
+        var reader = file.reader(io, &buf);
+        const content = try reader.interface.readAlloc(self.allocator, 10 * 1024 * 1024);
         defer self.allocator.free(content);
 
         try self.parseBaseline(content);
@@ -461,36 +495,36 @@ pub const RegressionTracker = struct {
 
     /// Save current results as new baseline
     pub fn saveBaseline(self: *Self, results: []const BenchResult) !void {
-        const timestamp = std.time.timestamp();
+        const timestamp = @as(i64, @intCast(@divFloor(nanoTimestamp(), std.time.ns_per_s)));
+        const io = getIo();
 
         // Build JSON in memory first
-        var output = std.ArrayListUnmanaged(u8){};
+        var output: std.ArrayList(u8) = .empty;
         defer output.deinit(self.allocator);
 
-        const w = output.writer(self.allocator);
-
-        try w.writeAll("{\n");
-        try w.print("  \"timestamp\": {},\n", .{timestamp});
-        try w.print("  \"count\": {},\n", .{results.len});
-        try w.writeAll("  \"benchmarks\": [\n");
+        try output.appendSlice(self.allocator, "{\n");
+        try output.print(self.allocator, "  \"timestamp\": {},\n", .{timestamp});
+        try output.print(self.allocator, "  \"count\": {},\n", .{results.len});
+        try output.appendSlice(self.allocator, "  \"benchmarks\": [\n");
 
         for (results, 0..) |r, i| {
-            try w.writeAll("    {\n");
-            try w.print("      \"name\": \"{s}\",\n", .{r.name});
-            try w.print("      \"avg_ns\": {},\n", .{r.avg_ns});
-            try w.print("      \"min_ns\": {},\n", .{r.min_ns});
-            try w.print("      \"max_ns\": {},\n", .{r.max_ns});
-            try w.print("      \"iterations\": {},\n", .{r.iterations});
-            try w.print("      \"timestamp\": {}\n", .{timestamp});
-            try w.print("    }}{s}\n", .{if (i < results.len - 1) "," else ""});
+            try output.appendSlice(self.allocator, "    {\n");
+            try output.print(self.allocator, "      \"name\": \"{s}\",\n", .{r.name});
+            try output.print(self.allocator, "      \"avg_ns\": {},\n", .{r.avg_ns});
+            try output.print(self.allocator, "      \"min_ns\": {},\n", .{r.min_ns});
+            try output.print(self.allocator, "      \"max_ns\": {},\n", .{r.max_ns});
+            try output.print(self.allocator, "      \"iterations\": {},\n", .{r.iterations});
+            try output.print(self.allocator, "      \"timestamp\": {}\n", .{timestamp});
+            try output.print(self.allocator, "    }}{s}\n", .{if (i < results.len - 1) "," else ""});
         }
 
-        try w.writeAll("  ]\n}\n");
+        try output.appendSlice(self.allocator, "  ]\n}\n");
 
         // Write to file
-        var file = try std.fs.cwd().createFile(self.config.baseline_path, .{});
-        defer file.close();
-        try file.writeAll(output.items);
+        const dir = std.Io.Dir.cwd();
+        var file = try dir.createFile(io, self.config.baseline_path, .{});
+        defer file.close(io);
+        file.writeStreamingAll(io, output.items) catch return error.IoError;
     }
 
     /// Check if baseline exists

@@ -35,6 +35,16 @@
 //! ```
 
 const std = @import("std");
+
+/// Zig 0.16.0 compat: libc-based monotonic timestamp (ns)
+fn nanoTimestamp() i128 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
+}
+fn getIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
 const types = @import("../vk/types.zig");
 const loader = @import("../vk/loader.zig");
 const err = @import("../vk/error.zig");
@@ -897,7 +907,7 @@ pub const MemoryBudgetMonitor = struct {
     status_changes: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
 
     // Mutex for protecting callback and last_status modifications
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = std.Io.Mutex.init,
 
     const Self = @This();
 
@@ -991,7 +1001,7 @@ pub const MemoryBudgetMonitor = struct {
     ///
     /// Returns true if a check was performed, false if skipped
     pub fn poll(self: *Self) bool {
-        const now = std.time.nanoTimestamp();
+        const now = nanoTimestamp();
         const last_time = self.last_poll_time.load(.acquire);
         const elapsed_ns = now - last_time;
         const interval_ns = @as(i128, self.poll_interval_ms) * 1_000_000;
@@ -1009,8 +1019,8 @@ pub const MemoryBudgetMonitor = struct {
         const status = self.check();
 
         // Lock for callback and last_status access
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(getIo());
+        defer self.mutex.unlock(getIo());
 
         // Check if status level changed
         const changed = if (self.last_status) |last| last.level != status.level else true;
@@ -1054,24 +1064,31 @@ pub const MemoryBudgetMonitor = struct {
     fn pollingThreadFn(self: *Self) void {
         while (!self.stop_polling.load(.acquire)) {
             _ = self.poll();
-            std.time.sleep(self.poll_interval_ms * 1_000_000);
+            {
+                const ns = self.poll_interval_ms * 1_000_000;
+                const ts = std.c.timespec{
+                    .sec = @intCast(@divFloor(ns, std.time.ns_per_s)),
+                    .nsec = @intCast(@rem(ns, std.time.ns_per_s)),
+                };
+                _ = std.c.nanosleep(&ts, null);
+            }
         }
     }
 
     /// Set the callback for status changes (thread-safe)
     pub fn setCallback(self: *Self, callback: ?MemoryStatusCallback, user_data: ?*anyopaque) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(getIo());
+        defer self.mutex.unlock(getIo());
         self.callback = callback;
         self.callback_user_data = user_data;
     }
 
     /// Get monitoring statistics (thread-safe)
     pub fn getStats(self: *Self) MonitorStats {
-        self.mutex.lock();
+        self.mutex.lockUncancelable(getIo());
         const last_status = self.last_status;
         const is_polling = self.polling_thread != null;
-        self.mutex.unlock();
+        self.mutex.unlock(getIo());
 
         return .{
             .total_checks = self.total_checks.load(.acquire),
@@ -1287,7 +1304,7 @@ pub const MemoryPressureHandler = struct {
             .name = name,
             .priority = priority,
             .size_bytes = size_bytes,
-            .last_access = std.time.nanoTimestamp(),
+            .last_access = nanoTimestamp(),
             .in_use = false,
         });
 
@@ -1313,7 +1330,7 @@ pub const MemoryPressureHandler = struct {
             if (r.user_data == user_data) {
                 r.in_use = in_use;
                 if (!in_use) {
-                    r.last_access = std.time.nanoTimestamp();
+                    r.last_access = nanoTimestamp();
                 }
                 return;
             }
@@ -1333,7 +1350,7 @@ pub const MemoryPressureHandler = struct {
     /// Check current memory pressure level
     pub fn check(self: *Self) MemoryBudgetMonitor.MemoryStatus {
         const status = self.monitor.check();
-        self.stats.last_check_time = std.time.nanoTimestamp();
+        self.stats.last_check_time = nanoTimestamp();
         self.stats.current_level = status.level;
         return status;
     }
@@ -1386,7 +1403,7 @@ pub const MemoryPressureHandler = struct {
         }.lessThan);
 
         var total_freed: usize = 0;
-        var evicted_indices = std.ArrayListUnmanaged(usize){};
+        var evicted_indices = std.ArrayListUnmanaged(usize).empty;
         defer evicted_indices.deinit(self.allocator);
 
         for (self.resources.items, 0..) |*resource, idx| {

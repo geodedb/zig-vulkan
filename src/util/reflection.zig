@@ -307,16 +307,16 @@ pub const ShaderReflection = struct {
 
         var self = Self{
             .allocator = allocator,
-            .bindings = .{},
-            .push_constants = .{},
-            .entry_points = .{},
+            .bindings = .empty,
+            .push_constants = .empty,
+            .entry_points = .empty,
             .names = .{},
             .decorations = .{},
             .member_decorations = .{},
             .type_info = .{},
-            .variables = .{},
+            .variables = .empty,
             .constants = .{},
-            .spec_constants = .{},
+            .spec_constants = .empty,
             .spirv_version = words[1],
             .bound = words[3],
         };

@@ -44,6 +44,18 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+/// Zig 0.16.0 compat: libc-based monotonic timestamp (ns)
+fn nanoTimestamp() i128 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
+}
+
+/// Zig 0.16.0 compat: get a global single-threaded Io instance
+fn getIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
 /// SPIR-V magic number
 const SPIRV_MAGIC: u32 = 0x07230203;
 
@@ -275,7 +287,7 @@ pub const Compiler = struct {
 
     fn compileWithGlslc(self: Self, options: CompileOptions) CompileError!CompileResult {
         // Build argument list
-        var args = std.ArrayListUnmanaged([]const u8){};
+        var args = std.ArrayListUnmanaged([]const u8).empty;
         defer args.deinit(self.allocator);
 
         args.append(self.allocator, self.compiler_path) catch return CompileError.OutOfMemory;
@@ -332,7 +344,7 @@ pub const Compiler = struct {
 
     fn compileWithGlslang(self: Self, options: CompileOptions) CompileError!CompileResult {
         // Build argument list for glslangValidator
-        var args = std.ArrayListUnmanaged([]const u8){};
+        var args = std.ArrayListUnmanaged([]const u8).empty;
         defer args.deinit(self.allocator);
 
         args.append(self.allocator, self.compiler_path) catch return CompileError.OutOfMemory;
@@ -372,50 +384,56 @@ pub const Compiler = struct {
     }
 
     fn runCompiler(self: Self, args: []const []const u8, source: []const u8) CompileError!CompileResult {
-        var child = std.process.Child.init(args, self.allocator);
-        child.stdin_behavior = .Pipe;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-
-        child.spawn() catch return CompileError.ProcessError;
+        const io = getIo();
+        var child = std.process.spawn(io, .{
+            .argv = args,
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = .pipe,
+        }) catch return CompileError.ProcessError;
 
         // Write source to stdin
         if (child.stdin) |stdin| {
-            stdin.writeAll(source) catch return CompileError.IoError;
-            stdin.close();
+            stdin.writeStreamingAll(io, source) catch return CompileError.IoError;
+            stdin.close(io);
             child.stdin = null;
         }
 
-        // Read stdout (SPIR-V output)
-        const stdout = child.stdout orelse return CompileError.ProcessError;
-        const spirv_bytes = stdout.readToEndAlloc(self.allocator, 64 * 1024 * 1024) catch return CompileError.IoError;
+        // Read stdout (SPIR-V output) via reader
+        if (child.stdout) |stdout| {
+            var buf: [4096]u8 = undefined;
+            var reader = stdout.reader(io, &buf);
+            const spirv_bytes = reader.interface.readAlloc(self.allocator, 64 * 1024 * 1024) catch return CompileError.IoError;
 
-        // Wait for completion
-        const result = child.wait() catch return CompileError.ProcessError;
+            // Wait for completion
+            const result = child.wait(io) catch return CompileError.ProcessError;
 
-        // Check exit code
-        const exit_code: u8 = switch (result) {
-            .Exited => |code| code,
-            else => 1, // Non-zero for non-exited termination
-        };
-        if (exit_code != 0) {
-            self.allocator.free(spirv_bytes);
-            return CompileError.CompilationFailed;
+            // Check exit code
+            const exit_code: u8 = switch (result) {
+                .exited => |code| code,
+                else => 1, // Non-zero for non-exited termination
+            };
+            if (exit_code != 0) {
+                self.allocator.free(spirv_bytes);
+                return CompileError.CompilationFailed;
+            }
+
+            // Validate SPIR-V size
+            if (spirv_bytes.len < 20 or spirv_bytes.len % 4 != 0) {
+                self.allocator.free(spirv_bytes);
+                return CompileError.CompilationFailed;
+            }
+
+            // Convert to u32 slice
+            const spirv: []const u32 = @alignCast(std.mem.bytesAsSlice(u32, spirv_bytes));
+
+            return CompileResult{
+                .spirv = spirv,
+                .allocator = self.allocator,
+            };
         }
 
-        // Validate SPIR-V size
-        if (spirv_bytes.len < 20 or spirv_bytes.len % 4 != 0) {
-            self.allocator.free(spirv_bytes);
-            return CompileError.CompilationFailed;
-        }
-
-        // Convert to u32 slice
-        const spirv: []const u32 = @alignCast(std.mem.bytesAsSlice(u32, spirv_bytes));
-
-        return CompileResult{
-            .spirv = spirv,
-            .allocator = self.allocator,
-        };
+        return CompileError.ProcessError;
     }
 
     fn findCompiler(allocator: std.mem.Allocator, backend: CompilerBackend) ?[]const u8 {
@@ -425,7 +443,7 @@ pub const Compiler = struct {
         const path_env = if (builtin.os.tag == .windows)
             std.process.getEnvVarOwned(allocator, "PATH") catch return null
         else
-            std.posix.getenv("PATH") orelse return null;
+            std.mem.span(std.c.getenv("PATH") orelse return null);
         defer if (builtin.os.tag == .windows) allocator.free(path_env);
 
         const path_sep: u8 = if (builtin.os.tag == .windows) ';' else ':';
@@ -436,8 +454,8 @@ pub const Compiler = struct {
             var path_buf: [std.fs.max_path_bytes]u8 = undefined;
             const full_path = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ dir, exe_name }) catch continue;
 
-            const file = std.fs.cwd().openFile(full_path, .{}) catch continue;
-            file.close();
+            const file = std.Io.Dir.cwd().openFile(getIo(), full_path, .{}) catch continue;
+            file.close(getIo());
 
             // Return static path based on backend
             return exe_name;
@@ -464,8 +482,8 @@ pub const Compiler = struct {
             var path_buf: [std.fs.max_path_bytes]u8 = undefined;
             const full_path = std.fmt.bufPrint(&path_buf, "{s}{s}", .{ base, exe_name }) catch continue;
 
-            const file = std.fs.cwd().openFile(full_path, .{}) catch continue;
-            file.close();
+            const file = std.Io.Dir.cwd().openFile(getIo(), full_path, .{}) catch continue;
+            file.close(getIo());
             return exe_name;
         }
 
@@ -490,10 +508,14 @@ pub fn compile(allocator: std.mem.Allocator, options: CompileOptions) CompileErr
 
 /// Compile GLSL file to SPIR-V
 pub fn compileFile(allocator: std.mem.Allocator, path: []const u8, stage: ShaderStage) CompileError!CompileResult {
-    const file = std.fs.cwd().openFile(path, .{}) catch return CompileError.IoError;
-    defer file.close();
+    const file = std.Io.Dir.cwd().openFile(getIo(), path, .{}) catch return CompileError.IoError;
+    defer file.close(getIo());
 
-    const source = file.readToEndAlloc(allocator, 10 * 1024 * 1024) catch return CompileError.IoError;
+    const stat = file.stat(getIo()) catch return CompileError.IoError;
+    if (stat.size > 10 * 1024 * 1024) return CompileError.IoError;
+    var rbuf: [4096]u8 = undefined;
+    var reader = file.reader(getIo(), &rbuf);
+    const source = reader.interface.readAlloc(allocator, stat.size) catch return CompileError.IoError;
     defer allocator.free(source);
 
     return compile(allocator, .{
@@ -614,7 +636,7 @@ pub const HlslCompiler = struct {
 
     /// Compile HLSL to SPIR-V
     pub fn compile(self: Self, options: HlslCompileOptions) CompileError!CompileResult {
-        var args = std.ArrayListUnmanaged([]const u8){};
+        var args = std.ArrayListUnmanaged([]const u8).empty;
         defer args.deinit();
 
         args.append(self.dxc_path) catch return CompileError.OutOfMemory;
@@ -737,7 +759,7 @@ pub const HlslCompiler = struct {
         const path_env = if (builtin.os.tag == .windows)
             std.process.getEnvVarOwned(allocator, "PATH") catch return null
         else
-            std.posix.getenv("PATH") orelse return null;
+            std.mem.span(std.c.getenv("PATH") orelse return null);
         defer if (builtin.os.tag == .windows) allocator.free(path_env);
 
         const path_sep: u8 = if (builtin.os.tag == .windows) ';' else ':';
@@ -747,8 +769,8 @@ pub const HlslCompiler = struct {
             var path_buf: [std.fs.max_path_bytes]u8 = undefined;
             const full_path = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ dir, exe_name }) catch continue;
 
-            const file = std.fs.cwd().openFile(full_path, .{}) catch continue;
-            file.close();
+            const file = std.Io.Dir.cwd().openFile(getIo(), full_path, .{}) catch continue;
+            file.close(getIo());
             return exe_name;
         }
 
@@ -772,8 +794,8 @@ pub const HlslCompiler = struct {
             var path_buf: [std.fs.max_path_bytes]u8 = undefined;
             const full_path = std.fmt.bufPrint(&path_buf, "{s}{s}", .{ base, exe_name }) catch continue;
 
-            const file = std.fs.cwd().openFile(full_path, .{}) catch continue;
-            file.close();
+            const file = std.Io.Dir.cwd().openFile(getIo(), full_path, .{}) catch continue;
+            file.close(getIo());
             return exe_name;
         }
 
@@ -857,17 +879,20 @@ pub fn detectCompilers(allocator: std.mem.Allocator) CompilerInfo {
 }
 
 fn detectDxcVersion(allocator: std.mem.Allocator, dxc_path: []const u8) ?[]const u8 {
-    const args = [_][]const u8{ dxc_path, "--version" };
-    var child = std.process.Child.init(&args, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
+    const io = getIo();
+    const argv = [_][]const u8{ dxc_path, "--version" };
+    var child = std.process.spawn(io, .{
+        .argv = &argv,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    }) catch return null;
 
-    child.spawn() catch return null;
+    const stdout_file = child.stdout orelse return null;
+    var buf: [4096]u8 = undefined;
+    var reader = stdout_file.reader(io, &buf);
+    const output = reader.interface.readAlloc(allocator, 4096) catch return null;
 
-    const stdout = child.stdout orelse return null;
-    const output = stdout.readToEndAlloc(allocator, 4096) catch return null;
-
-    _ = child.wait() catch return null;
+    _ = child.wait(io) catch return null;
 
     // Parse version from output (typically "dxcompiler.dll: X.X.X.X" or similar)
     if (std.mem.indexOf(u8, output, "version")) |idx| {
@@ -886,6 +911,8 @@ fn detectDxcVersion(allocator: std.mem.Allocator, dxc_path: []const u8) ?[]const
 }
 
 fn detectMaxShaderModel(allocator: std.mem.Allocator, dxc_path: []const u8) ?HlslShaderModel {
+    _ = allocator;
+    const io = getIo();
     // Try compiling with highest shader models to detect support
     const test_shader = "float4 main() : SV_Target { return 0; }";
     const shader_models = [_]HlslShaderModel{
@@ -897,7 +924,7 @@ fn detectMaxShaderModel(allocator: std.mem.Allocator, dxc_path: []const u8) ?Hls
         const profile = HlslProfile{ .stage = .fragment, .shader_model = sm };
         const profile_str = profile.toProfileString(&profile_buf);
 
-        const args = [_][]const u8{
+        const argv = [_][]const u8{
             dxc_path,
             "-T",
             profile_str,
@@ -908,23 +935,27 @@ fn detectMaxShaderModel(allocator: std.mem.Allocator, dxc_path: []const u8) ?Hls
             "-",
         };
 
-        var child = std.process.Child.init(&args, allocator);
-        child.stdin_behavior = .Pipe;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-
-        child.spawn() catch continue;
+        var child = std.process.spawn(io, .{
+            .argv = &argv,
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = .pipe,
+        }) catch continue;
 
         if (child.stdin) |stdin| {
-            stdin.writeAll(test_shader) catch |e| {
+            stdin.writeStreamingAll(io, test_shader) catch |e| {
                 std.log.debug("glslangValidator probe: failed to write test shader: {s}", .{@errorName(e)});
             };
-            stdin.close();
+            stdin.close(io);
             child.stdin = null;
         }
 
-        const result = child.wait() catch continue;
-        if (result.Exited == 0) {
+        const result = child.wait(io) catch continue;
+        const exit_code: u8 = switch (result) {
+            .exited => |code| code,
+            else => 1,
+        };
+        if (exit_code == 0) {
             return sm;
         }
     }
@@ -1164,7 +1195,8 @@ pub const ShaderCache = struct {
 
         // Create cache directory if needed
         if (config.create_dir) {
-            std.fs.cwd().makePath(config.cache_dir) catch |e| {
+            const io = std.Io.Threaded.global_single_threaded.io();
+            std.Io.Dir.cwd().createDirPath(io, config.cache_dir) catch |e| {
                 if (e != error.PathAlreadyExists) {
                     // Non-fatal - continue without caching
                     std.log.warn("[ShaderCache] Failed to create cache directory: {}", .{e});
@@ -1269,35 +1301,34 @@ pub const ShaderCache = struct {
         var path_buf: [std.fs.max_path_bytes]u8 = undefined;
         const path = std.fmt.bufPrint(&path_buf, "{s}/{s}.spv", .{ self.config.cache_dir, key[0..16] }) catch return null;
 
-        const file = std.fs.cwd().openFile(path, .{}) catch return null;
-        defer file.close();
+        const file = std.Io.Dir.cwd().openFile(getIo(), path, .{}) catch return null;
+        defer file.close(getIo());
 
         // Check TTL if configured
         if (self.config.ttl_seconds > 0) {
-            const stat = file.stat() catch return null;
-            const now = std.time.timestamp();
-            const file_age: u64 = @intCast(now - @as(i64, @intCast(stat.mtime)));
-            if (file_age > self.config.ttl_seconds * std.time.ns_per_s) {
+            const stat_ttl = file.stat(getIo()) catch return null;
+            const now_ns = nanoTimestamp();
+            const mtime_ns: i128 = stat_ttl.mtime.nanoseconds;
+            const file_age_ns = now_ns - mtime_ns;
+            if (file_age_ns > @as(i128, self.config.ttl_seconds) * std.time.ns_per_s) {
                 return null; // Cache entry expired
             }
         }
 
         // Read file size
-        const stat = file.stat() catch return null;
+        const stat = file.stat(getIo()) catch return null;
         if (stat.size < 20 or stat.size % 4 != 0) return null; // Invalid SPIR-V
 
         const word_count = stat.size / 4;
         const spirv = self.allocator.alloc(u32, word_count) catch return null;
         errdefer self.allocator.free(spirv);
 
-        const bytes_read = file.readAll(std.mem.sliceAsBytes(spirv)) catch {
+        var rbuf: [4096]u8 = undefined;
+        var reader = file.reader(getIo(), &rbuf);
+        reader.interface.readSliceAll(std.mem.sliceAsBytes(spirv)) catch {
             self.allocator.free(spirv);
             return null;
         };
-        if (bytes_read != stat.size) {
-            self.allocator.free(spirv);
-            return null;
-        }
 
         // Validate SPIR-V if configured
         if (self.config.validate_on_load) {
@@ -1319,16 +1350,16 @@ pub const ShaderCache = struct {
         var path_buf: [std.fs.max_path_bytes]u8 = undefined;
         const path = std.fmt.bufPrint(&path_buf, "{s}/{s}.spv", .{ self.config.cache_dir, key[0..16] }) catch return;
 
-        const file = std.fs.cwd().createFile(path, .{}) catch return;
-        defer file.close();
+        const file = std.Io.Dir.cwd().createFile(getIo(), path, .{}) catch return;
+        defer file.close(getIo());
 
-        file.writeAll(std.mem.sliceAsBytes(result.spirv)) catch return;
+        file.writeStreamingAll(getIo(), std.mem.sliceAsBytes(result.spirv)) catch return;
     }
 
     /// Clear all cached shaders
     pub fn clearCache(self: *Self) void {
-        var dir = std.fs.cwd().openDir(self.config.cache_dir, .{ .iterate = true }) catch return;
-        defer dir.close();
+        var dir = std.Io.Dir.cwd().openDir(getIo(), self.config.cache_dir, .{ .iterate = true }) catch return;
+        defer dir.close(getIo());
 
         var iter = dir.iterate();
         while (iter.next() catch null) |entry| {

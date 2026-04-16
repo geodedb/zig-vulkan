@@ -97,6 +97,15 @@ pub const ShaderCacheConfig = glsl.ShaderCacheConfig;
 pub const ShaderCacheStats = glsl.ShaderCache.CacheStats;
 pub const compileWithCache = glsl.compileWithCache;
 
+// Zig 0.16.0 compat: std.time.nanoTimestamp() was removed.
+// Since this library links libc, use clock_gettime(MONOTONIC) directly.
+pub fn nanoTimestamp() i128 {
+    const std_inner = @import("std");
+    var ts: std_inner.c.timespec = undefined;
+    _ = std_inner.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i128, ts.sec) * std_inner.time.ns_per_s + ts.nsec;
+}
+
 test {
     @import("std").testing.refAllDecls(@This());
 }

@@ -37,6 +37,13 @@
 //! ```
 
 const std = @import("std");
+
+/// Zig 0.16.0 compat: libc-based monotonic timestamp (ns)
+fn nanoTimestamp() i128 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
+}
 const types = @import("../vk/types.zig");
 const loader = @import("../vk/loader.zig");
 const err = @import("../vk/error.zig");
@@ -1122,7 +1129,7 @@ pub const PooledAllocator = struct {
     /// Perform incremental defragmentation with a budget
     /// This is suitable for calling each frame without blocking
     pub fn defragmentIncremental(self: *Self, budget: DefragBudget) DefragResult {
-        const start_time = std.time.nanoTimestamp();
+        const start_time = nanoTimestamp();
         var result = DefragResult{
             .allocations_moved = 0,
             .bytes_freed = 0,
@@ -1140,7 +1147,7 @@ pub const PooledAllocator = struct {
                     // Check budget
                     if (processed >= budget.max_allocations) break;
 
-                    const elapsed: u64 = @intCast(std.time.nanoTimestamp() - start_time);
+                    const elapsed: u64 = @intCast(nanoTimestamp() - start_time);
                     if (elapsed >= budget.max_time_ns) break;
 
                     // Coalesce this chunk
@@ -1332,7 +1339,7 @@ test "PoolConfig defaults" {
 
 test "FreeRegion coalescing logic" {
     // Test that free regions can be properly tracked
-    var regions = std.ArrayListUnmanaged(FreeRegion){};
+    var regions = std.ArrayListUnmanaged(FreeRegion).empty;
     defer regions.deinit(std.testing.allocator);
 
     try regions.append(std.testing.allocator, .{ .offset = 0, .size = 100 });

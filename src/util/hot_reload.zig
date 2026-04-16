@@ -37,6 +37,18 @@
 //! ```
 
 const std = @import("std");
+
+/// Zig 0.16.0 compat: libc-based monotonic timestamp (ns)
+fn nanoTimestamp() i128 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
+}
+
+/// Zig 0.16.0 compat: get a global single-threaded Io instance
+fn getIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
 const types = @import("../vk/types.zig");
 const builtin = @import("builtin");
 const loader = @import("../vk/loader.zig");
@@ -115,7 +127,7 @@ pub const ShaderWatcher = struct {
     /// Initialize a new shader watcher
     pub fn init(allocator: std.mem.Allocator) Self {
         return .{
-            .entries = .{},
+            .entries = .empty,
             .allocator = allocator,
         };
     }
@@ -174,7 +186,7 @@ pub const ShaderWatcher = struct {
     pub fn poll(self: *Self) !u32 {
         if (self.paused) return 0;
 
-        const now = std.time.nanoTimestamp();
+        const now = nanoTimestamp();
 
         // Respect poll interval
         if (now - self.last_poll_ns < @as(i128, @intCast(self.poll_interval_ns))) {
@@ -245,7 +257,7 @@ pub const ShaderWatcher = struct {
 
     /// Get file info for a path
     fn getFileInfo(self: Self, path: []const u8, compute_hash: bool) !ShaderFileInfo {
-        const file = std.fs.cwd().openFile(path, .{}) catch |e| {
+        const file = std.Io.Dir.cwd().openFile(getIo(), path, .{}) catch |e| {
             // Preserve specific errors for better diagnostics
             return switch (e) {
                 error.FileNotFound => error.FileNotFound,
@@ -261,21 +273,23 @@ pub const ShaderWatcher = struct {
                 },
             };
         };
-        defer file.close();
+        defer file.close(getIo());
 
-        const stat = try file.stat();
+        const stat = try file.stat(getIo());
 
         var hash: ?u64 = null;
         if (compute_hash) {
             // Read file and compute hash
-            const content = try file.readToEndAlloc(self.allocator, 10 * 1024 * 1024); // 10MB limit
+            var rbuf: [4096]u8 = undefined;
+            var reader = file.reader(getIo(), &rbuf);
+            const content = try reader.interface.readAlloc(self.allocator, stat.size); // read entire file
             defer self.allocator.free(content);
             hash = std.hash.Wyhash.hash(0, content);
         }
 
         return ShaderFileInfo{
             .path = path,
-            .last_modified = stat.mtime,
+            .last_modified = stat.mtime.nanoseconds,
             .size = stat.size,
             .content_hash = hash,
         };
@@ -339,11 +353,13 @@ pub const HotReloadShader = struct {
     /// Reload the shader from disk
     pub fn reload(self: *Self) !void {
         // Read shader file
-        const file = try std.fs.cwd().openFile(self.path, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().openFile(getIo(), self.path, .{});
+        defer file.close(getIo());
 
-        const stat = try file.stat();
-        const code = try file.readToEndAlloc(self.allocator, 50 * 1024 * 1024); // 50MB limit
+        const stat = try file.stat(getIo());
+        var rbuf: [4096]u8 = undefined;
+        var reader = file.reader(getIo(), &rbuf);
+        const code = try reader.interface.readAlloc(self.allocator, stat.size);
         defer self.allocator.free(code);
 
         // Validate SPIR-V magic number
@@ -382,7 +398,7 @@ pub const HotReloadShader = struct {
         // Update file info with optional content hash
         self.file_info = ShaderFileInfo{
             .path = self.path,
-            .last_modified = stat.mtime,
+            .last_modified = stat.mtime.nanoseconds,
             .size = stat.size,
             .content_hash = if (self.use_content_hash) std.hash.Wyhash.hash(0, aligned_code) else null,
         };
@@ -391,19 +407,19 @@ pub const HotReloadShader = struct {
     /// Check if the shader file has changed and reload if necessary
     /// Returns true if shader was reloaded
     pub fn checkAndReload(self: *Self) !bool {
-        const file = std.fs.cwd().openFile(self.path, .{}) catch |e| {
+        const file = std.Io.Dir.cwd().openFile(getIo(), self.path, .{}) catch |e| {
             return switch (e) {
                 error.FileNotFound => false,
                 error.AccessDenied => false,
                 else => error.Unexpected,
             };
         };
-        defer file.close();
+        defer file.close(getIo());
 
-        const stat = try file.stat();
+        const stat = try file.stat(getIo());
         const current_info = ShaderFileInfo{
             .path = self.path,
-            .last_modified = stat.mtime,
+            .last_modified = stat.mtime.nanoseconds,
             .size = stat.size,
         };
 

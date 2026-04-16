@@ -23,7 +23,7 @@ const PipelineStage = enum(u64) {
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -144,7 +144,7 @@ pub fn main() !void {
         std.debug.print("  Signaled: compute_started ({})\n", .{@intFromEnum(PipelineStage.compute_started)});
 
         // Simulate compute work (small delay)
-        _ = std.time.nanoTimestamp(); // Just a small operation instead of sleep
+        std.mem.doNotOptimizeAway(@as(u32, 0)); // Just a small operation instead of sleep
 
         try timeline.signal(@intFromEnum(PipelineStage.compute_complete));
         std.debug.print("  Signaled: compute_complete ({})\n", .{@intFromEnum(PipelineStage.compute_complete)});

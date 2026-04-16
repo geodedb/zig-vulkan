@@ -206,7 +206,7 @@ pub const ShaderVariantManager = struct {
     /// Evict unused variants (LRU)
     pub fn evictUnused(self: *Self, max_age: u64) u32 {
         var evicted: u32 = 0;
-        var to_remove = std.ArrayListUnmanaged(u64){};
+        var to_remove = std.ArrayListUnmanaged(u64).empty;
         defer to_remove.deinit(self.allocator);
 
         var iter = self.variants.iterator();
@@ -332,7 +332,7 @@ pub const VariantBuilder = struct {
     pub fn init(allocator: std.mem.Allocator) Self {
         return .{
             .allocator = allocator,
-            .constants = .{},
+            .constants = .empty,
         };
     }
 

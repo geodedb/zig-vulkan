@@ -6,6 +6,16 @@
 const std = @import("std");
 const vulkan = @import("vulkan");
 
+/// Zig 0.16.0 compat
+fn nanoTimestamp() i128 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
+}
+fn getIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
+
 // Skip message for when Vulkan is unavailable
 const skip_message = "Vulkan not available - skipping integration test";
 
@@ -814,7 +824,7 @@ test "persistent pipeline cache - basic operations" {
     const cache_path = "/tmp/test_pipeline_cache.bin";
 
     // Remove any existing cache file
-    std.fs.cwd().deleteFile(cache_path) catch {};
+    std.Io.Dir.cwd().deleteFile(getIo(), cache_path) catch {};
 
     var cache = vulkan.PersistentPipelineCache.init(&ctx, .{
         .cache_path = cache_path,
@@ -842,7 +852,7 @@ test "persistent pipeline cache - basic operations" {
     };
 
     // Clean up
-    std.fs.cwd().deleteFile(cache_path) catch {};
+    std.Io.Dir.cwd().deleteFile(getIo(), cache_path) catch {};
 
     std.debug.print("\nPersistent pipeline cache test passed\n", .{});
 }
@@ -862,7 +872,7 @@ test "persistent pipeline cache - reload from disk" {
     defer ctx.deinit();
 
     const cache_path = "/tmp/test_pipeline_cache_reload.bin";
-    std.fs.cwd().deleteFile(cache_path) catch {};
+    std.Io.Dir.cwd().deleteFile(getIo(), cache_path) catch {};
 
     // Create and save a cache
     {
@@ -883,7 +893,7 @@ test "persistent pipeline cache - reload from disk" {
             .validate_header = true,
         }) catch |e| {
             std.debug.print("\nCache reload failed: {}\n", .{e});
-            std.fs.cwd().deleteFile(cache_path) catch {};
+            std.Io.Dir.cwd().deleteFile(getIo(), cache_path) catch {};
             return;
         };
         defer cache.deinit();
@@ -895,7 +905,7 @@ test "persistent pipeline cache - reload from disk" {
         }
     }
 
-    std.fs.cwd().deleteFile(cache_path) catch {};
+    std.Io.Dir.cwd().deleteFile(getIo(), cache_path) catch {};
     std.debug.print("\nPersistent pipeline cache reload test passed\n", .{});
 }
 
@@ -995,7 +1005,7 @@ test "memory pressure handler registration" {
         .evict_fn = dummy_callback,
         .priority = 0,
         .size_bytes = 1024,
-        .last_access = std.time.nanoTimestamp(),
+        .last_access = nanoTimestamp(),
         .in_use = false,
     }) catch |e| {
         std.debug.print("\nResource registration failed: {}\n", .{e});

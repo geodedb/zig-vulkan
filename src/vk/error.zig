@@ -7,6 +7,16 @@
 //! mapping VkResult codes to Zig errors and providing diagnostic information.
 
 const std = @import("std");
+
+/// Zig 0.16.0 compat: libc-based monotonic timestamp (ns)
+fn nanoTimestamp() i128 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
+}
+fn getIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
 const types = @import("types.zig");
 
 /// Comprehensive error set for all Vulkan operations
@@ -225,7 +235,7 @@ pub const ErrorContext = struct {
             .location = SourceLocation.here(),
             .message = message,
             .details = details,
-            .timestamp = std.time.nanoTimestamp(),
+            .timestamp = nanoTimestamp(),
             .vk_result = null,
         };
     }
@@ -241,7 +251,7 @@ pub const ErrorContext = struct {
             .location = SourceLocation.here(),
             .message = message,
             .details = details,
-            .timestamp = std.time.nanoTimestamp(),
+            .timestamp = nanoTimestamp(),
             .vk_result = result,
         };
     }
@@ -342,13 +352,13 @@ pub const ErrorLog = struct {
     traces: [16]ErrorTrace,
     current: u8,
     enabled: bool,
-    mutex: std.Thread.Mutex,
+    mutex: std.Io.Mutex,
 
     var instance: ErrorLog = .{
         .traces = undefined,
         .current = 0,
         .enabled = true,
-        .mutex = .{},
+        .mutex = std.Io.Mutex.init,
     };
 
     /// Get the global error log
@@ -358,8 +368,8 @@ pub const ErrorLog = struct {
 
     /// Start a new error trace (thread-safe)
     pub fn beginTrace(self: *ErrorLog) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(getIo());
+        defer self.mutex.unlock(getIo());
 
         if (!self.enabled) return;
         self.current = (self.current + 1) % 16;
@@ -368,8 +378,8 @@ pub const ErrorLog = struct {
 
     /// Log an error context (thread-safe)
     pub fn log(self: *ErrorLog, ctx: ErrorContext) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(getIo());
+        defer self.mutex.unlock(getIo());
 
         if (!self.enabled) return;
         self.traces[self.current].push(ctx);
@@ -379,8 +389,8 @@ pub const ErrorLog = struct {
     ///
     /// Returns a copy to avoid holding the lock while caller uses the trace.
     pub fn currentTrace(self: *ErrorLog) ErrorTrace {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(getIo());
+        defer self.mutex.unlock(getIo());
         return self.traces[self.current];
     }
 
@@ -393,15 +403,15 @@ pub const ErrorLog = struct {
 
     /// Enable/disable error logging (thread-safe)
     pub fn setEnabled(self: *ErrorLog, enabled: bool) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(getIo());
+        defer self.mutex.unlock(getIo());
         self.enabled = enabled;
     }
 
     /// Check if logging is enabled (thread-safe)
     pub fn isEnabled(self: *ErrorLog) bool {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(getIo());
+        defer self.mutex.unlock(getIo());
         return self.enabled;
     }
 };
@@ -417,7 +427,7 @@ pub fn logError(
         .location = SourceLocation.here(),
         .message = message,
         .details = details,
-        .timestamp = std.time.nanoTimestamp(),
+        .timestamp = nanoTimestamp(),
         .vk_result = null,
     };
     ErrorLog.global().log(ctx);
@@ -436,7 +446,7 @@ pub fn logVkError(
         .location = SourceLocation.here(),
         .message = message,
         .details = details,
-        .timestamp = std.time.nanoTimestamp(),
+        .timestamp = nanoTimestamp(),
         .vk_result = result,
     };
     ErrorLog.global().log(ctx);

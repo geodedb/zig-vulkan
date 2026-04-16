@@ -83,7 +83,7 @@ pub const SimpleAllocator = struct {
             .device = device,
             .dispatch = dispatch,
             .memory_properties = memory_properties,
-            .allocations = .{},
+            .allocations = .empty,
             .host_allocator = host_allocator,
         };
     }

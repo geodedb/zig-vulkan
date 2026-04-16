@@ -151,8 +151,8 @@ pub const AliasingPool = struct {
         return Self{
             .allocator = allocator,
             .options = options,
-            .resources = .{},
-            .ranges = .{},
+            .resources = .empty,
+            .ranges = .empty,
             .active_lifetimes = .{},
         };
     }
@@ -226,7 +226,7 @@ pub const AliasingPool = struct {
         }
 
         // Collect all ranges that overlap with our lifetime
-        var conflicting = std.ArrayListUnmanaged(MemoryRange){};
+        var conflicting = std.ArrayListUnmanaged(MemoryRange).empty;
         defer conflicting.deinit(self.allocator);
 
         for (self.ranges.items) |range| {
@@ -275,7 +275,7 @@ pub const AliasingPool = struct {
         var max_usage: u64 = 0;
 
         // Get all unique time points
-        var time_points = std.ArrayListUnmanaged(u32){};
+        var time_points = std.ArrayListUnmanaged(u32).empty;
         defer time_points.deinit(self.allocator);
 
         for (self.ranges.items) |range| {
@@ -373,7 +373,7 @@ pub const AliasingPool = struct {
 
     /// Get all resources active at a given time
     pub fn getActiveResources(self: Self, allocator_: std.mem.Allocator, time: u32) ![]const AliasedResource {
-        var active = std.ArrayListUnmanaged(AliasedResource){};
+        var active = std.ArrayListUnmanaged(AliasedResource).empty;
         errdefer active.deinit(allocator_);
 
         for (self.resources.items) |res| {

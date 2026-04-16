@@ -41,6 +41,18 @@
 //! ```
 
 const std = @import("std");
+
+/// Zig 0.16.0 compat: libc-based monotonic timestamp (ns)
+fn nanoTimestamp() i128 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
+}
+
+/// Zig 0.16.0 compat: get a global single-threaded Io instance
+fn getIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
 const builtin = @import("builtin");
 const types = @import("../vk/types.zig");
 const loader = @import("../vk/loader.zig");
@@ -97,10 +109,10 @@ pub const ShaderModule = struct {
 
     /// Create a shader module from a file
     pub fn initFromFile(ctx: *Context, path: []const u8) err.Error!Self {
-        const file = std.fs.cwd().openFile(path, .{}) catch return err.Error.InvalidSpirv;
-        defer file.close();
+        const file = std.Io.Dir.cwd().openFile(getIo(), path, .{}) catch return err.Error.InvalidSpirv;
+        defer file.close(getIo());
 
-        const stat = file.stat() catch return err.Error.InvalidSpirv;
+        const stat = file.stat(getIo()) catch return err.Error.InvalidSpirv;
         if (stat.size % 4 != 0 or stat.size > max_shader_file_size) {
             return err.Error.InvalidSpirv;
         }
@@ -108,8 +120,9 @@ pub const ShaderModule = struct {
         const buffer = ctx.allocator.alloc(u8, stat.size) catch return err.Error.OutOfHostMemory;
         defer ctx.allocator.free(buffer);
 
-        const bytes_read = file.readAll(buffer) catch return err.Error.InvalidSpirv;
-        if (bytes_read != stat.size) return err.Error.InvalidSpirv;
+        var read_buf: [4096]u8 = undefined;
+        var reader = file.reader(getIo(), &read_buf);
+        reader.interface.readSliceAll(buffer) catch return err.Error.InvalidSpirv;
 
         return initFromBytes(ctx, buffer);
     }
@@ -201,7 +214,7 @@ pub const DescriptorSetLayout = struct {
             }
         }
 
-        var vk_bindings = std.ArrayListUnmanaged(types.DescriptorSetLayoutBinding){};
+        var vk_bindings = std.ArrayListUnmanaged(types.DescriptorSetLayoutBinding).empty;
         defer vk_bindings.deinit(ctx.allocator);
 
         for (bindings) |b| {
@@ -380,13 +393,13 @@ pub const PipelineCache = struct {
 
     /// Load cache from file
     pub fn initFromFile(ctx: *Context, path: []const u8) err.Error!Self {
-        const file = std.fs.cwd().openFile(path, .{}) catch {
+        const file = std.Io.Dir.cwd().openFile(getIo(), path, .{}) catch {
             // File doesn't exist, create empty cache
             return init(ctx);
         };
-        defer file.close();
+        defer file.close(getIo());
 
-        const stat = file.stat() catch return init(ctx);
+        const stat = file.stat(getIo()) catch return init(ctx);
         if (stat.size == 0 or stat.size > max_shader_file_size) {
             return init(ctx);
         }
@@ -394,8 +407,9 @@ pub const PipelineCache = struct {
         const buffer = ctx.allocator.alloc(u8, stat.size) catch return err.Error.OutOfHostMemory;
         defer ctx.allocator.free(buffer);
 
-        const bytes_read = file.readAll(buffer) catch return init(ctx);
-        if (bytes_read != stat.size) return init(ctx);
+        var read_buf: [4096]u8 = undefined;
+        var reader = file.reader(getIo(), &read_buf);
+        reader.interface.readSliceAll(buffer) catch return init(ctx);
 
         return initFromData(ctx, buffer);
     }
@@ -420,10 +434,10 @@ pub const PipelineCache = struct {
         const data = try self.getData(allocator);
         defer allocator.free(data);
 
-        const file = std.fs.cwd().createFile(path, .{}) catch return err.Error.Unknown;
-        defer file.close();
+        const file = std.Io.Dir.cwd().createFile(getIo(), path, .{}) catch return err.Error.Unknown;
+        defer file.close(getIo());
 
-        file.writeAll(data) catch return err.Error.Unknown;
+        file.writeStreamingAll(getIo(), data) catch return err.Error.Unknown;
     }
 
     /// Merge another cache into this one
@@ -508,7 +522,7 @@ pub const PersistentPipelineCache = struct {
 
     /// Initialize persistent cache
     pub fn init(ctx: *Context, config: PersistentCacheConfig) err.Error!Self {
-        const start_time = std.time.nanoTimestamp();
+        const start_time = nanoTimestamp();
         var stats = CacheStats{};
 
         // Try to load from disk
@@ -516,26 +530,26 @@ pub const PersistentPipelineCache = struct {
             if (config.create_dirs) {
                 // Ensure parent directory exists
                 if (std.fs.path.dirname(config.cache_path)) |dir| {
-                    std.fs.cwd().makePath(dir) catch |e| {
+                    std.Io.Dir.cwd().createDirPath(getIo(), dir) catch |e| {
                         std.log.debug("PipelineCache: could not create directory {s}: {s}", .{ dir, @errorName(e) });
                     };
                 }
             }
 
             // Try loading existing cache
-            const file = std.fs.cwd().openFile(config.cache_path, .{}) catch {
+            const file = std.Io.Dir.cwd().openFile(getIo(), config.cache_path, .{}) catch {
                 // File doesn't exist, create empty cache
                 break :blk try PipelineCache.init(ctx);
             };
-            defer file.close();
+            defer file.close(getIo());
 
-            const file_stat = file.stat() catch {
+            const file_stat = file.stat(getIo()) catch {
                 break :blk try PipelineCache.init(ctx);
             };
 
             if (file_stat.size == 0 or file_stat.size > config.max_file_size) {
                 if (config.delete_on_invalid) {
-                    std.fs.cwd().deleteFile(config.cache_path) catch |e| {
+                    std.Io.Dir.cwd().deleteFile(getIo(), config.cache_path) catch |e| {
                         std.log.debug("PipelineCache: could not delete invalid cache: {s}", .{@errorName(e)});
                     };
                 }
@@ -547,19 +561,17 @@ pub const PersistentPipelineCache = struct {
             };
             defer ctx.allocator.free(buffer);
 
-            const bytes_read = file.readAll(buffer) catch {
+            var rbuf: [4096]u8 = undefined;
+            var reader = file.reader(getIo(), &rbuf);
+            reader.interface.readSliceAll(buffer) catch {
                 break :blk try PipelineCache.init(ctx);
             };
-
-            if (bytes_read != file_stat.size) {
-                break :blk try PipelineCache.init(ctx);
-            }
 
             // Validate cache header if requested
             if (config.validate_header) {
                 if (!validateCacheHeader(buffer, ctx)) {
                     if (config.delete_on_invalid) {
-                        std.fs.cwd().deleteFile(config.cache_path) catch |e| {
+                        std.Io.Dir.cwd().deleteFile(getIo(), config.cache_path) catch |e| {
                             std.log.debug("PipelineCache: could not delete invalid cache after header validation: {s}", .{@errorName(e)});
                         };
                     }
@@ -569,12 +581,12 @@ pub const PersistentPipelineCache = struct {
             }
 
             stats.loaded_from_disk = true;
-            stats.loaded_size = bytes_read;
+            stats.loaded_size = file_stat.size;
 
             break :blk PipelineCache.initFromData(ctx, buffer) catch {
                 // Invalid cache data, create empty
                 if (config.delete_on_invalid) {
-                    std.fs.cwd().deleteFile(config.cache_path) catch |e| {
+                    std.Io.Dir.cwd().deleteFile(getIo(), config.cache_path) catch |e| {
                         std.log.debug("PipelineCache: could not delete invalid cache after load failure: {s}", .{@errorName(e)});
                     };
                 }
@@ -582,7 +594,7 @@ pub const PersistentPipelineCache = struct {
             };
         };
 
-        stats.load_time_ns = std.time.nanoTimestamp() - start_time;
+        stats.load_time_ns = nanoTimestamp() - start_time;
 
         return Self{
             .inner = inner,
@@ -650,18 +662,18 @@ pub const PersistentPipelineCache = struct {
 
         if (self.config.create_dirs) {
             if (std.fs.path.dirname(self.config.cache_path)) |dir| {
-                std.fs.cwd().makePath(dir) catch |e| {
+                std.Io.Dir.cwd().createDirPath(getIo(), dir) catch |e| {
                     std.log.debug("PipelineCache.save: could not create directory: {s}", .{@errorName(e)});
                 };
             }
         }
 
-        const file = std.fs.cwd().createFile(self.config.cache_path, .{}) catch {
+        const file = std.Io.Dir.cwd().createFile(getIo(), self.config.cache_path, .{}) catch {
             return err.Error.Unknown;
         };
-        defer file.close();
+        defer file.close(getIo());
 
-        file.writeAll(data) catch {
+        file.writeStreamingAll(getIo(), data) catch {
             return err.Error.Unknown;
         };
     }
@@ -1369,7 +1381,7 @@ pub const HotReloadablePipeline = struct {
 
     /// Force reload the shader (useful for testing or manual triggers)
     pub fn reload(self: *Self) u32 {
-        const start_time = std.time.nanoTimestamp();
+        const start_time = nanoTimestamp();
 
         // Try to load and compile new shader
         const new_shader = ShaderModule.initFromFile(self.ctx, self.config.shader_path) catch |e| {

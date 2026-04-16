@@ -16,6 +16,18 @@
 //! - Resource lifetime tracking
 
 const std = @import("std");
+
+/// Zig 0.16.0 compat: libc-based monotonic timestamp (ns)
+fn nanoTimestamp() i128 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
+}
+
+/// Zig 0.16.0 compat: get a global single-threaded Io instance
+fn getIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
 const types = @import("../vk/types.zig");
 const Context = @import("context.zig").Context;
 const async_compute = @import("async_compute.zig");
@@ -375,8 +387,8 @@ pub const TaskNode = struct {
     user_data: ?*anyopaque = null,
 
     /// Internal: computed dependencies
-    dependencies: std.ArrayListUnmanaged(u32) = .{},
-    dependents: std.ArrayListUnmanaged(u32) = .{},
+    dependencies: std.ArrayListUnmanaged(u32) = .empty,
+    dependents: std.ArrayListUnmanaged(u32) = .empty,
 
     /// Internal: execution state
     in_degree: u32 = 0,
@@ -447,12 +459,12 @@ pub const ComputeGraph = struct {
         return .{
             .allocator = allocator,
             .ctx = ctx,
-            .tasks = .{},
+            .tasks = .empty,
             .task_names = .{},
             .resources = .{},
-            .execution_order = .{},
-            .barriers = .{},
-            .levels = .{},
+            .execution_order = .empty,
+            .barriers = .empty,
+            .levels = .empty,
         };
     }
 
@@ -573,7 +585,7 @@ pub const ComputeGraph = struct {
             .buffer = buffer,
             .size = size,
             .last_write = null,
-            .readers = .{},
+            .readers = .empty,
         });
 
         return .{ .id = id };
@@ -758,7 +770,7 @@ pub const ComputeGraph = struct {
         }
 
         // Kahn's algorithm
-        var queue = std.ArrayListUnmanaged(u32){};
+        var queue = std.ArrayListUnmanaged(u32).empty;
         defer queue.deinit(self.allocator);
 
         // Find all tasks with no dependencies
@@ -841,7 +853,7 @@ pub const ComputeGraph = struct {
         }
 
         for (0..max_level + 1) |_| {
-            try self.levels.append(self.allocator, .{});
+            try self.levels.append(self.allocator, .empty);
         }
 
         for (self.tasks.items, 0..) |task, i| {
@@ -1147,7 +1159,7 @@ pub const ComputeGraph = struct {
 
     /// Record, submit, and optionally wait for graph execution
     pub fn submit(self: *Self, options: SubmitOptions) !ExecutionResult {
-        const start_time = std.time.nanoTimestamp();
+        const start_time = nanoTimestamp();
 
         if (!self.compiled) {
             try self.compile();
@@ -1272,7 +1284,7 @@ pub const ComputeGraph = struct {
         // Free command buffer
         self.ctx.device_dispatch.freeCommandBuffers(self.ctx.device, cmd_pool, 1, @ptrCast(&cmd));
 
-        const end_time = std.time.nanoTimestamp();
+        const end_time = nanoTimestamp();
 
         return ExecutionResult{
             .total_time_ns = @intCast(end_time - start_time),
@@ -1332,7 +1344,7 @@ pub const ComputeGraph = struct {
     /// Submit graph asynchronously and wait for completion
     /// This is a convenience wrapper around submitAsync() + waitCurrentFrame()
     pub fn submitAsyncAndWait(self: *Self) !ExecutionResult {
-        const start_time = std.time.nanoTimestamp();
+        const start_time = nanoTimestamp();
 
         const frame_idx = try self.submitAsync();
         _ = frame_idx;
@@ -1351,7 +1363,7 @@ pub const ComputeGraph = struct {
             }
         }
 
-        const end_time = std.time.nanoTimestamp();
+        const end_time = nanoTimestamp();
 
         return ExecutionResult{
             .total_time_ns = @intCast(end_time - start_time),
@@ -1430,7 +1442,7 @@ pub const ComputeGraph = struct {
     /// // Write to file or stdout
     /// ```
     pub fn exportDot(self: *Self) ![]const u8 {
-        var output = std.ArrayListUnmanaged(u8){};
+        var output = std.ArrayListUnmanaged(u8).empty;
         errdefer output.deinit(self.allocator);
 
         // Header
@@ -1516,10 +1528,10 @@ pub const ComputeGraph = struct {
         const dot = try self.exportDot();
         defer self.allocator.free(dot);
 
-        const file = try std.fs.cwd().createFile(path, .{});
-        defer file.close();
+        const file = try std.Io.Dir.cwd().createFile(getIo(), path, .{});
+        defer file.close(getIo());
 
-        try file.writeAll(dot);
+        try file.writeStreamingAll(getIo(), dot);
     }
 };
 

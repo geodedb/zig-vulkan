@@ -599,8 +599,8 @@ pub const QueueSync = struct {
     pub fn init(allocator: std.mem.Allocator) Self {
         return Self{
             .allocator = allocator,
-            .buffer_transfers = .{},
-            .image_transfers = .{},
+            .buffer_transfers = .empty,
+            .image_transfers = .empty,
         };
     }
 

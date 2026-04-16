@@ -58,6 +58,16 @@
 //! | Command Prepare  | 4 batches   | Yes              |
 
 const std = @import("std");
+
+/// Zig 0.16.0 compat: libc-based monotonic timestamp (ns)
+fn nanoTimestamp() i128 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
+}
+fn getIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
 const tp = @import("thread_pool");
 
 /// Maximum number of parallel chunks any fan-out operation will create.
@@ -68,11 +78,11 @@ const MAX_CHUNKS: usize = 64;
 // ============================================================================
 
 var global_pool: ?tp.ThreadPool = null;
-var pool_mutex: std.Thread.Mutex = .{};
+var pool_mutex: std.Io.Mutex = std.Io.Mutex.init;
 
 pub fn getPool() *tp.ThreadPool {
-    pool_mutex.lock();
-    defer pool_mutex.unlock();
+    pool_mutex.lockUncancelable(getIo());
+    defer pool_mutex.unlock(getIo());
 
     if (global_pool == null) {
         global_pool = tp.ThreadPool.init(std.heap.page_allocator, .{}) catch
@@ -82,8 +92,8 @@ pub fn getPool() *tp.ThreadPool {
 }
 
 pub fn deinitPool() void {
-    pool_mutex.lock();
-    defer pool_mutex.unlock();
+    pool_mutex.lockUncancelable(getIo());
+    defer pool_mutex.unlock(getIo());
 
     if (global_pool) |*pool| {
         pool.deinit();

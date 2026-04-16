@@ -13,6 +13,13 @@ const std = @import("std");
 const vulkan = @import("vulkan");
 const regression = @import("regression.zig");
 
+/// Zig 0.16.0 compat: libc-based monotonic timestamp (ns)
+fn nanoTimestamp() i128 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
+}
+
 const BenchmarkResult = struct {
     name: []const u8,
     iterations: u64,
@@ -40,7 +47,7 @@ const BenchmarkSuite = struct {
 
     pub fn init(allocator: std.mem.Allocator) BenchmarkSuite {
         return .{
-            .results = .{},
+            .results = .empty,
             .allocator = allocator,
         };
     }
@@ -87,26 +94,26 @@ const BenchmarkSuite = struct {
         std.debug.print("========================================================================\n", .{});
     }
 
-    pub fn printJson(self: BenchmarkSuite, writer: anytype) !void {
-        try writer.writeAll("{\n  \"benchmarks\": [\n");
+    pub fn printJson(self: BenchmarkSuite) void {
+        std.debug.print("{{\n  \"benchmarks\": [\n", .{});
 
         for (self.results.items, 0..) |r, i| {
-            try writer.print("    {{\n", .{});
-            try writer.print("      \"name\": \"{s}\",\n", .{r.name});
-            try writer.print("      \"iterations\": {},\n", .{r.iterations});
-            try writer.print("      \"total_ns\": {},\n", .{r.total_ns});
-            try writer.print("      \"min_ns\": {},\n", .{r.min_ns});
-            try writer.print("      \"max_ns\": {},\n", .{r.max_ns});
-            try writer.print("      \"avg_ns\": {},\n", .{r.avg_ns});
+            std.debug.print("    {{\n", .{});
+            std.debug.print("      \"name\": \"{s}\",\n", .{r.name});
+            std.debug.print("      \"iterations\": {},\n", .{r.iterations});
+            std.debug.print("      \"total_ns\": {},\n", .{r.total_ns});
+            std.debug.print("      \"min_ns\": {},\n", .{r.min_ns});
+            std.debug.print("      \"max_ns\": {},\n", .{r.max_ns});
+            std.debug.print("      \"avg_ns\": {},\n", .{r.avg_ns});
             if (r.throughput_mb_s) |tp| {
-                try writer.print("      \"throughput_mb_s\": {d:.2}\n", .{tp});
+                std.debug.print("      \"throughput_mb_s\": {d:.2}\n", .{tp});
             } else {
-                try writer.print("      \"throughput_mb_s\": null\n", .{});
+                std.debug.print("      \"throughput_mb_s\": null\n", .{});
             }
-            try writer.print("    }}{s}\n", .{if (i < self.results.items.len - 1) "," else ""});
+            std.debug.print("    }}{s}\n", .{if (i < self.results.items.len - 1) "," else ""});
         }
 
-        try writer.writeAll("  ]\n}\n");
+        std.debug.print("  ]\n}}\n", .{});
     }
 };
 
@@ -127,9 +134,9 @@ fn runBenchmark(
 
     // Actual benchmark
     for (0..iterations) |_| {
-        const start = std.time.nanoTimestamp();
+        const start = nanoTimestamp();
         func() catch {};
-        const end = std.time.nanoTimestamp();
+        const end = nanoTimestamp();
 
         const elapsed: u64 = @intCast(end - start);
         total_ns += elapsed;
@@ -394,14 +401,19 @@ fn benchCompilerDetection() !void {
     _ = vulkan.glsl.detectCompilers(g_allocator);
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+pub fn main(init: std.process.Init.Minimal) !void {
+    var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
     g_allocator = allocator;
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    var args_list: std.ArrayList([:0]const u8) = .empty;
+    defer args_list.deinit(allocator);
+    var args_iter = std.process.Args.Iterator.init(init.args);
+    while (args_iter.next()) |arg| {
+        try args_list.append(allocator, arg);
+    }
+    const args = args_list.items;
 
     // Parse command-line arguments
     var json_output = false;
@@ -571,11 +583,7 @@ pub fn main() !void {
 
     // Output results
     if (json_output) {
-        // For JSON output, write to a buffer and then to stderr
-        var buf: [16384]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        try suite.printJson(fbs.writer());
-        std.debug.print("{s}", .{fbs.getWritten()});
+        suite.printJson();
     } else {
         suite.printTable();
     }
@@ -593,7 +601,7 @@ pub fn main() !void {
         defer tracker.deinit();
 
         // Convert results to regression format
-        var regression_results = std.ArrayListUnmanaged(regression.RegressionTracker.BenchResult){};
+        var regression_results: std.ArrayListUnmanaged(regression.RegressionTracker.BenchResult) = .empty;
         defer regression_results.deinit(allocator);
 
         for (suite.results.items) |r| {
@@ -620,10 +628,7 @@ pub fn main() !void {
                 report.printSummary();
             } else {
                 // JSON regression output
-                var buf: [32768]u8 = undefined;
-                var fbs = std.io.fixedBufferStream(&buf);
-                report.toJson(fbs.writer()) catch {};
-                std.debug.print("{s}", .{fbs.getWritten()});
+                report.printJson();
             }
 
             // Exit with error if regressions detected

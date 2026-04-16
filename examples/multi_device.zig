@@ -29,7 +29,7 @@ const std = @import("std");
 const vulkan = @import("vulkan");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -69,7 +69,7 @@ pub fn main() !void {
     // Create contexts for multiple devices
     std.debug.print("Creating contexts for {} devices...\n\n", .{device_count});
 
-    var contexts = std.ArrayListUnmanaged(vulkan.Context){};
+    var contexts: std.ArrayListUnmanaged(vulkan.Context) = .empty;
     defer {
         for (contexts.items) |*ctx| {
             ctx.deinit();

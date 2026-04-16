@@ -27,6 +27,16 @@
 //! ```
 
 const std = @import("std");
+
+/// Zig 0.16.0 compat: libc-based monotonic timestamp (ns)
+fn nanoTimestamp() i128 {
+    var ts: std.c.timespec = undefined;
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
+}
+fn getIo() std.Io {
+    return std.Io.Threaded.global_single_threaded.io();
+}
 const builtin = @import("builtin");
 const err = @import("../vk/error.zig");
 
@@ -188,12 +198,18 @@ pub fn retry(
                     jitter_range,
                 });
             }
-            const actual_delay = if (config.add_jitter)
-                delay + @as(u64, std.crypto.random.intRangeAtMost(u32, 0, @as(u32, @intCast(jitter_range))))
-            else
-                delay;
+            const actual_delay = if (config.add_jitter) blk: {
+                // Use PRNG seeded from monotonic clock for jitter
+                var prng = std.Random.DefaultPrng.init(@as(u64, @intCast(nanoTimestamp() & 0xFFFFFFFFFFFFFFFF)));
+                break :blk delay + @as(u64, prng.random().intRangeAtMost(u32, 0, @as(u32, @intCast(jitter_range))));
+            } else delay;
 
-            std.Thread.sleep(actual_delay * std.time.ns_per_ms);
+            const sleep_ns = actual_delay * std.time.ns_per_ms;
+            const ts = std.c.timespec{
+                .sec = @intCast(@divFloor(sleep_ns, std.time.ns_per_s)),
+                .nsec = @intCast(@rem(sleep_ns, std.time.ns_per_s)),
+            };
+            _ = std.c.nanosleep(&ts, null);
 
             // Exponential backoff
             delay = @min(
@@ -260,7 +276,7 @@ pub const ErrorCollector = struct {
 
     pub fn init(allocator: std.mem.Allocator, max_errors: usize) Self {
         return Self{
-            .errors = .{},
+            .errors = .empty,
             .max_errors = max_errors,
             .allocator = allocator,
         };
@@ -283,7 +299,7 @@ pub const ErrorCollector = struct {
             .error_code = error_code,
             .location = location,
             .message = message,
-            .timestamp = std.time.nanoTimestamp(),
+            .timestamp = nanoTimestamp(),
             .retry_count = 0,
         }) catch |alloc_err| {
             std.log.warn("Failed to record error {s} at {s}: {s}", .{
@@ -522,7 +538,7 @@ pub const DeviceLostHandler = struct {
         return Self{
             .allocator = allocator,
             .config = config,
-            .resources = .{},
+            .resources = .empty,
             .device_lost_count = 0,
             .last_device_lost_time = 0,
             .is_recovering = false,
@@ -593,7 +609,7 @@ pub const DeviceLostHandler = struct {
         defer self.is_recovering = false;
 
         self.device_lost_count += 1;
-        self.last_device_lost_time = std.time.nanoTimestamp();
+        self.last_device_lost_time = nanoTimestamp();
 
         if (self.config.enable_logging) {
             std.log.info("Device lost detected (occurrence #{d}), initiating recovery...", .{self.device_lost_count});
@@ -619,7 +635,12 @@ pub const DeviceLostHandler = struct {
 
             // Wait before retrying
             if (attempt + 1 < self.config.max_recreation_attempts) {
-                std.Thread.sleep(self.config.recreation_delay_ms * std.time.ns_per_ms);
+                const sleep_ns = self.config.recreation_delay_ms * std.time.ns_per_ms;
+                const ts = std.c.timespec{
+                    .sec = @intCast(@divFloor(sleep_ns, std.time.ns_per_s)),
+                    .nsec = @intCast(@rem(sleep_ns, std.time.ns_per_s)),
+                };
+                _ = std.c.nanosleep(&ts, null);
             }
         }
 
@@ -800,12 +821,12 @@ pub const DeviceLostChecker = struct {
 /// this provides a simple global handler.
 pub const GlobalDeviceLostHandler = struct {
     var instance: ?DeviceLostHandler = null;
-    var mutex: std.Thread.Mutex = .{};
+    var mutex: std.Io.Mutex = std.Io.Mutex.init;
 
     /// Initialize the global handler (call once at startup)
     pub fn init(allocator: std.mem.Allocator, config: DeviceLostConfig) void {
-        mutex.lock();
-        defer mutex.unlock();
+        mutex.lockUncancelable(getIo());
+        defer mutex.unlock(getIo());
         if (instance == null) {
             instance = DeviceLostHandler.init(allocator, config);
         }
@@ -813,8 +834,8 @@ pub const GlobalDeviceLostHandler = struct {
 
     /// Deinitialize the global handler
     pub fn deinit() void {
-        mutex.lock();
-        defer mutex.unlock();
+        mutex.lockUncancelable(getIo());
+        defer mutex.unlock(getIo());
         if (instance) |*h| {
             h.deinit();
             instance = null;
@@ -823,8 +844,8 @@ pub const GlobalDeviceLostHandler = struct {
 
     /// Get the global handler (returns null if not initialized)
     pub fn get() ?*DeviceLostHandler {
-        mutex.lock();
-        defer mutex.unlock();
+        mutex.lockUncancelable(getIo());
+        defer mutex.unlock(getIo());
         if (instance) |*h| return h;
         return null;
     }
@@ -836,8 +857,8 @@ pub const GlobalDeviceLostHandler = struct {
         recreate_fn: ResourceRecreateCallback,
         priority: i32,
     ) !void {
-        mutex.lock();
-        defer mutex.unlock();
+        mutex.lockUncancelable(getIo());
+        defer mutex.unlock(getIo());
         if (instance) |*h| {
             try h.registerResource(name, user_data, recreate_fn, priority);
         }
@@ -845,8 +866,8 @@ pub const GlobalDeviceLostHandler = struct {
 
     /// Handle device lost on the global handler
     pub fn handleDeviceLost() RecreationError!void {
-        mutex.lock();
-        defer mutex.unlock();
+        mutex.lockUncancelable(getIo());
+        defer mutex.unlock(getIo());
         if (instance) |*h| {
             return h.handleDeviceLost();
         }
@@ -1114,11 +1135,11 @@ test "DeviceLostHandler recovery with multiple resources" {
     defer handler.deinit();
 
     const RecreationOrder = struct {
-        var order: std.ArrayListUnmanaged(u32) = .{};
+        var order: std.ArrayListUnmanaged(u32) = .empty;
         var allocator: ?std.mem.Allocator = null;
     };
     RecreationOrder.allocator = std.testing.allocator;
-    RecreationOrder.order = .{};
+    RecreationOrder.order = .empty;
     defer RecreationOrder.order.deinit(std.testing.allocator);
 
     var resource1: u32 = 1;
