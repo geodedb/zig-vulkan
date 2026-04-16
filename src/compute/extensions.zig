@@ -1049,6 +1049,9 @@ pub const MemoryBudgetMonitor = struct {
         }
 
         self.stop_polling.store(false, .release);
+        // daemon: GPU fence polling thread. Blocks on vkWaitForFences which
+        // can sleep indefinitely. Not a thread-pool candidate — a blocked
+        // wait has no cooperative reschedule on a bounded pool.
         self.polling_thread = try std.Thread.spawn(.{}, pollingThreadFn, .{self});
     }
 
