@@ -157,9 +157,9 @@ pub const AsyncCoordinator = struct {
             .allocator = allocator,
             .options = options,
             .frames = undefined,
-            .pending_ops = .{},
-            .resource_states = .{},
-            .resource_owners = .{},
+            .pending_ops = .empty,
+            .resource_states = .empty,
+            .resource_owners = .empty,
         };
 
         // Allocate frame sync data

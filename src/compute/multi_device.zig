@@ -339,7 +339,7 @@ pub const MultiDeviceContext = struct {
         var best: ?*PhysicalDeviceHandle = null;
         var best_score: i32 = -1;
 
-        for (&self.devices) |*dev| {
+        for (self.devices) |*dev| {
             if (!dev.matchesCriteria(criteria)) continue;
 
             const s = dev.score(criteria);
@@ -356,7 +356,7 @@ pub const MultiDeviceContext = struct {
     pub fn selectDevices(self: Self, criteria: DeviceSelector, out: []?*PhysicalDeviceHandle) usize {
         var count: usize = 0;
 
-        for (&self.devices) |*dev| {
+        for (self.devices) |*dev| {
             if (count >= out.len) break;
             if (dev.matchesCriteria(criteria)) {
                 out[count] = dev;
@@ -389,7 +389,7 @@ pub const MultiDeviceContext = struct {
             }
         }
 
-        for (&self.devices) |*dev| {
+        for (self.devices) |*dev| {
             if (dev.compute_queue_family != null) {
                 contexts[count] = try dev.createContext(options);
                 count += 1;

@@ -792,7 +792,6 @@ test "diagnostics suggestions" {
 
 test "error log global instance" {
     const log = vulkan.ErrorLog.global();
-    try std.testing.expect(log != null);
 
     log.beginTrace();
     const ctx = vulkan.ErrorContext.from(vulkan.Error.Timeout, "Test timeout", null);
@@ -958,7 +957,7 @@ test "memory budget monitor" {
     };
     defer ctx.deinit();
 
-    const monitor = vulkan.MemoryBudgetMonitor.init(&ctx);
+    var monitor = vulkan.MemoryBudgetMonitor.init(&ctx);
     const status = monitor.check();
 
     // Should be OK initially (no allocations)
@@ -999,22 +998,20 @@ test "memory pressure handler registration" {
         }
     }.evict;
 
-    handler.registerResource(.{
-        .name = "test_resource",
-        .user_data = null,
-        .evict_fn = dummy_callback,
-        .priority = 0,
-        .size_bytes = 1024,
-        .last_access = nanoTimestamp(),
-        .in_use = false,
-    }) catch |e| {
+    handler.registerResource(
+        "test_resource",
+        null,
+        dummy_callback,
+        0,
+        1024,
+    ) catch |e| {
         std.debug.print("\nResource registration failed: {}\n", .{e});
         return;
     };
 
     // Check pressure (should trigger threshold check)
-    const pressure = handler.checkPressure();
-    std.debug.print("\nMemory pressure check: {s}\n", .{@tagName(pressure)});
+    const status = handler.check();
+    std.debug.print("\nMemory pressure check: {s}\n", .{@tagName(status.level)});
 
     std.debug.print("\nMemory pressure handler test passed\n", .{});
 }
@@ -1052,7 +1049,7 @@ test "device lost handler - resource registration" {
     // Stats should show zero device lost events
     const stats = handler.getStats();
     try std.testing.expect(stats.device_lost_count == 0);
-    try std.testing.expect(stats.successful_recoveries == 0);
+    try std.testing.expect(!stats.is_recovering);
 
     std.debug.print("\nDevice lost handler test passed\n", .{});
 }

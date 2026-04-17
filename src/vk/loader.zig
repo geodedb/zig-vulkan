@@ -520,6 +520,9 @@ pub const DeviceDispatch = struct {
     vkDestroyPipelineLayout: ?*const fn (types.Device, types.PipelineLayout, ?*const anyopaque) callconv(.c) void = null,
     vkCreateComputePipelines: ?*const fn (types.Device, ?types.PipelineCache, u32, [*]const types.ComputePipelineCreateInfo, ?*const anyopaque, [*]types.Pipeline) callconv(.c) types.Result = null,
     vkDestroyPipeline: ?*const fn (types.Device, types.Pipeline, ?*const anyopaque) callconv(.c) void = null,
+    vkCreatePipelineCache: ?*const fn (types.Device, *const types.PipelineCacheCreateInfo, ?*const anyopaque, *types.PipelineCache) callconv(.c) types.Result = null,
+    vkDestroyPipelineCache: ?*const fn (types.Device, types.PipelineCache, ?*const anyopaque) callconv(.c) void = null,
+    vkGetPipelineCacheData: ?*const fn (types.Device, types.PipelineCache, *usize, ?*anyopaque) callconv(.c) types.Result = null,
 
     // Query pools
     vkCreateQueryPool: ?*const fn (types.Device, *const types.QueryPoolCreateInfo, ?*const anyopaque, *types.QueryPool) callconv(.c) types.Result = null,
@@ -628,6 +631,9 @@ pub const DeviceDispatch = struct {
         self.vkDestroyPipelineLayout = @ptrCast(loader.get(get_proc, device, "vkDestroyPipelineLayout"));
         self.vkCreateComputePipelines = @ptrCast(loader.get(get_proc, device, "vkCreateComputePipelines"));
         self.vkDestroyPipeline = @ptrCast(loader.get(get_proc, device, "vkDestroyPipeline"));
+        self.vkCreatePipelineCache = @ptrCast(loader.get(get_proc, device, "vkCreatePipelineCache"));
+        self.vkDestroyPipelineCache = @ptrCast(loader.get(get_proc, device, "vkDestroyPipelineCache"));
+        self.vkGetPipelineCacheData = @ptrCast(loader.get(get_proc, device, "vkGetPipelineCacheData"));
 
         // Query pools
         self.vkCreateQueryPool = @ptrCast(loader.get(get_proc, device, "vkCreateQueryPool"));

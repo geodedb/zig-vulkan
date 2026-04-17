@@ -586,6 +586,14 @@ pub const PipelineLayoutCreateInfo = extern struct {
     p_push_constant_ranges: ?[*]const PushConstantRange = null,
 };
 
+pub const PipelineCacheCreateInfo = extern struct {
+    s_type: StructureType = .pipeline_cache_create_info,
+    p_next: ?*const anyopaque = null,
+    flags: u32 = 0,
+    initial_data_size: usize = 0,
+    p_initial_data: ?*const anyopaque = null,
+};
+
 pub const PushConstantRange = extern struct {
     stage_flags: ShaderStageFlags,
     offset: u32,

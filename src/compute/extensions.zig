@@ -1271,7 +1271,7 @@ pub const MemoryPressureHandler = struct {
             .allocator = allocator,
             .ctx = ctx,
             .config = config,
-            .resources = .{},
+            .resources = .empty,
             .stats = .{},
             .monitor = MemoryBudgetMonitor.initWithThresholds(ctx, config.warning_threshold, config.critical_threshold),
         };
@@ -1301,7 +1301,7 @@ pub const MemoryPressureHandler = struct {
             return err.Error.TooManyObjects;
         }
 
-        try self.resources.append(self.allocator, .{
+        self.resources.append(self.allocator, .{
             .user_data = user_data,
             .evict_fn = evict_fn,
             .name = name,
@@ -1309,7 +1309,7 @@ pub const MemoryPressureHandler = struct {
             .size_bytes = size_bytes,
             .last_access = nanoTimestamp(),
             .in_use = false,
-        });
+        }) catch return err.Error.OutOfHostMemory;
 
         self.stats.tracked_resources = self.resources.items.len;
     }
