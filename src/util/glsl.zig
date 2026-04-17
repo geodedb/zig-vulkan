@@ -1107,6 +1107,7 @@ pub fn detectLanguage(path: []const u8) ?SourceLanguage {
 
     // HLSL extensions
     if (std.mem.eql(u8, ext, ".hlsl") or
+        std.mem.eql(u8, ext, ".hlsli") or
         std.mem.eql(u8, ext, ".fx") or
         std.mem.eql(u8, ext, ".csh") or
         std.mem.eql(u8, ext, ".vsh") or
