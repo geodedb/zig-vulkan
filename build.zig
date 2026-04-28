@@ -175,14 +175,18 @@ pub fn build(b: *std.Build) void {
     const run_lib_tests = b.addRunArtifact(lib_tests);
     test_step.dependOn(&run_lib_tests.step);
 
-    // Observability seam tests (disabled-mode no-op).
+    // Observability seam tests. Two test roots:
     //
-    // observability_disabled_test.zig runs under BOTH flag values. Each
-    // test inside it is skip-guarded via
-    // `if (vulkan.observability.enabled) return error.SkipZigTest;`
-    // so the disabled-mode invariants only fire when the flag is off.
-    // The enabled-mode smoke test target is registered in Chunk C
-    // alongside `src/observability_init.zig`.
+    //   - observability_disabled_test.zig: runs under BOTH flag values.
+    //     Each test inside it is skip-guarded via
+    //     `if (vulkan.observability.enabled) return error.SkipZigTest;`
+    //     so the disabled-mode invariants only fire when the flag is off.
+    //
+    //   - observability_enabled_test.zig: registered under both flag
+    //     values too, but every test inside it skips when the flag is
+    //     off. The `otel` import is only wired when `with_otel = true`;
+    //     the test file's `comptime if (build_options.with_otel)` stub
+    //     keeps it compiling under the disabled build.
     const disabled_obs_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/observability_disabled_test.zig"),
@@ -197,6 +201,22 @@ pub fn build(b: *std.Build) void {
     });
     const run_disabled_obs_tests = b.addRunArtifact(disabled_obs_tests);
     test_step.dependOn(&run_disabled_obs_tests.step);
+
+    const enabled_obs_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/observability_enabled_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "vulkan", .module = vulkan_mod },
+                .{ .name = "build_options", .module = build_options_mod },
+            },
+        }),
+    });
+    if (otel_mod) |m| enabled_obs_tests.root_module.addImport("otel", m);
+    const run_enabled_obs_tests = b.addRunArtifact(enabled_obs_tests);
+    test_step.dependOn(&run_enabled_obs_tests.step);
 
     // ==========================================================================
     // Integration Tests
