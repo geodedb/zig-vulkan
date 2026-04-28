@@ -205,3 +205,6 @@ geodetestlab/.venv/
 geodetestlab/venv/
 geodetestlab/**/__pycache__/
 geodetestlab/**/*.egg-info/
+
+# Local git worktrees (per-feature isolated checkouts)
+.worktrees/
