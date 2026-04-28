@@ -1,8 +1,6 @@
 # Zig Vulkan Compute Library
 
-A production-grade GPU compute library for Zig, providing a clean, safe API for Vulkan compute operations.
-
-**Version: 0.6.0**
+A production-grade GPU compute library for Zig, providing a clean, safe API for Vulkan compute operations. Version 0.6.0.
 
 ## Status
 
@@ -173,7 +171,7 @@ if (result.isAvailable()) {
 
 ## Project Structure
 
-```
+```text
 vulkan/
 ├── src/
 │   ├── lib.zig              # Public API
@@ -435,6 +433,7 @@ const ctx = vulkan.Context.init(allocator, .{}) catch |err| {
 ```
 
 Common errors:
+
 - `VulkanUnavailable` - Vulkan loader not found
 - `NoDevices` - No Vulkan devices found
 - `NoComputeQueue` - No compute-capable queue
@@ -466,6 +465,53 @@ for (0..budget.heap_count) |i| {
     });
 }
 ```
+
+## Observability
+
+`vulkan` ships an opt-in OpenTelemetry seam. Build with
+`-Dwith_otel=true` to compile in instrumentation; the default
+(`-Dwith_otel=false`) leaves every span site as a comptime no-op so
+the optimizer eliminates the entry/exit calls and the `otel`
+dependency is never fetched.
+
+Public Vulkan boundaries emit exactly one span per call, named
+`vulkan.{operation}` with the OpenTelemetry `gpu.*` semantic-convention
+attributes:
+
+- `gpu.system = "vulkan"`
+- `gpu.operation = <method>` (e.g. `queue_submit`, `device_wait_idle`,
+  `pipeline_create`, `queue_wait_idle`)
+
+The instrumented entry points are:
+
+| Operation                          | Span name                  | Extra attributes                                        |
+|------------------------------------|----------------------------|---------------------------------------------------------|
+| `Submission.submit`                | `vulkan.queue_submit`      | `vulkan.cmd_buffer_count`                               |
+| `QueueManager.submitCompute`       | `vulkan.queue_submit`      | `vulkan.queue_family="compute"`, `vulkan.cmd_buffer_count` |
+| `QueueManager.submitTransfer`      | `vulkan.queue_submit`      | `vulkan.queue_family="transfer"` (or `compute` fallback), `vulkan.cmd_buffer_count` |
+| `QueueManager.submitAsyncCompute`  | `vulkan.queue_submit`      | `vulkan.queue_family="async_compute"` (or `compute` fallback), `vulkan.cmd_buffer_count` |
+| `Submission.waitQueueIdle`         | `vulkan.queue_wait_idle`   | --                                                      |
+| `Context.waitIdle`                 | `vulkan.device_wait_idle`  | --                                                      |
+| `ComputePipeline.init`             | `vulkan.pipeline_create`   | -- (no shader bytecode or pipeline state in attrs)      |
+
+Per-record command-buffer ops are deliberately NOT instrumented (high
+volume, low signal). Telemetry is non-fatal: every emit and attribute
+write is `catch {}`-discarded so a failed exporter or attribute-set
+OOM can never propagate into GPU operations.
+
+```bash
+zig build test                  # default: -Dwith_otel=false (no-op)
+zig build test -Dwith_otel=true # otel compiled in, spans emitted
+```
+
+When enabled, the consumer's process bootstrap calls
+`vulkan.observability_init.Otel.init(allocator, "service-name")` and
+parks the returned value at a stable address (a `var` in `main` or a
+heap allocation), then calls `installGlobals(&that_value)` so the
+seam can publish its tracer pointer.
+
+For the full integration recipe and template files, see
+`otel/docs/integration/RECIPE.md` in the otel repo.
 
 ## Contributing
 
