@@ -186,6 +186,22 @@ pub const shader_variants = @import("pipeline/variants.zig");
 /// Parallel operations (requires `thread_pool`).
 pub const parallel = @import("parallel");
 
+// otel observability seam. Surfaces `startVulkanSpan` /
+// `endVulkanSpan` plus the `enabled` flag. When `-Dwith_otel=false`
+// (the default), every helper collapses to a comptime no-op and the
+// otel dependency is never resolved. The public API is reachable as
+// `vulkan.observability`.
+pub const observability = @import("observability");
+
+// Bootstrap helper for the enabled build. Only registered as a build
+// import when `-Dwith_otel=true`; under the disabled build the
+// reference resolves to a placeholder empty struct so the public root
+// stays uniform.
+pub const observability_init = if (observability.enabled)
+    @import("observability_init")
+else
+    struct {};
+
 // =============================================================================
 // Top-level API (convenience re-exports)
 // =============================================================================
