@@ -37,6 +37,7 @@ const types = @import("../vk/types.zig");
 const loader = @import("../vk/loader.zig");
 const err = @import("../vk/error.zig");
 const mem_alloc = @import("../util/allocator.zig");
+const observability = @import("observability");
 
 /// Debug statistics collected during context lifetime
 pub const DebugStats = struct {
@@ -709,8 +710,12 @@ pub const Context = struct {
 
     /// Wait for device to become idle
     pub fn waitIdle(self: Self) err.Error!void {
+        var __obs_span = observability.startVulkanSpan("device_wait_idle");
+        defer __obs_span.end(null);
+        errdefer observability.endVulkanSpan(__obs_span, false);
         const result = self.device_dispatch.vkDeviceWaitIdle.?(self.device);
         if (result != .success) return err.fromVkResult(result);
+        observability.endVulkanSpan(__obs_span, true);
     }
 
     /// Get debug statistics (only meaningful when debug_utils is enabled)

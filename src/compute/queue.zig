@@ -36,6 +36,7 @@ const Context = @import("context.zig").Context;
 const Fence = @import("command.zig").Fence;
 const Semaphore = @import("command.zig").Semaphore;
 const CommandBuffer = @import("command.zig").CommandBuffer;
+const observability = @import("observability");
 
 /// Queue family information
 pub const QueueFamilyInfo = struct {
@@ -177,7 +178,13 @@ pub const QueueManager = struct {
         signal_semaphore: ?Semaphore,
         fence: ?Fence,
     ) err.Error!void {
+        var __obs_span = observability.startVulkanSpan("queue_submit");
+        defer __obs_span.end(null);
+        errdefer observability.endVulkanSpan(__obs_span, false);
+        __obs_span.setStringAttribute("vulkan.queue_family", "compute") catch {};
+        __obs_span.setIntAttribute("vulkan.cmd_buffer_count", 1) catch {};
         try self.submitToQueue(self.compute_queue.queue, cmd, wait_semaphore, signal_semaphore, fence);
+        observability.endVulkanSpan(__obs_span, true);
     }
 
     /// Submit work to the transfer queue (falls back to compute queue if unavailable)
@@ -188,8 +195,18 @@ pub const QueueManager = struct {
         signal_semaphore: ?Semaphore,
         fence: ?Fence,
     ) err.Error!void {
+        var __obs_span = observability.startVulkanSpan("queue_submit");
+        defer __obs_span.end(null);
+        errdefer observability.endVulkanSpan(__obs_span, false);
+        // Reflect the actual queue used: when the transfer queue is
+        // unavailable we fall back to the compute queue, so the
+        // attribute should follow that fallback.
+        const queue_family: []const u8 = if (self.transfer_queue != null) "transfer" else "compute";
+        __obs_span.setStringAttribute("vulkan.queue_family", queue_family) catch {};
+        __obs_span.setIntAttribute("vulkan.cmd_buffer_count", 1) catch {};
         const queue = if (self.transfer_queue) |tq| tq.queue else self.compute_queue.queue;
         try self.submitToQueue(queue, cmd, wait_semaphore, signal_semaphore, fence);
+        observability.endVulkanSpan(__obs_span, true);
     }
 
     /// Submit work to the async compute queue (falls back to main compute if unavailable)
@@ -200,8 +217,15 @@ pub const QueueManager = struct {
         signal_semaphore: ?Semaphore,
         fence: ?Fence,
     ) err.Error!void {
+        var __obs_span = observability.startVulkanSpan("queue_submit");
+        defer __obs_span.end(null);
+        errdefer observability.endVulkanSpan(__obs_span, false);
+        const queue_family: []const u8 = if (self.async_compute_queue != null) "async_compute" else "compute";
+        __obs_span.setStringAttribute("vulkan.queue_family", queue_family) catch {};
+        __obs_span.setIntAttribute("vulkan.cmd_buffer_count", 1) catch {};
         const queue = if (self.async_compute_queue) |aq| aq.queue else self.compute_queue.queue;
         try self.submitToQueue(queue, cmd, wait_semaphore, signal_semaphore, fence);
+        observability.endVulkanSpan(__obs_span, true);
     }
 
     /// Submit to a specific queue

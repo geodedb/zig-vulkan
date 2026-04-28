@@ -30,8 +30,21 @@ const otel = if (enabled) @import("otel") else struct {};
 /// zero-sized struct the optimizer drops entirely. The no-op fallback's
 /// `end` signature MUST match `otel.api.trace.Span.end(?u64) void` so
 /// callers can write `span.end(null)` regardless of `enabled` state.
+///
+/// The stub also exposes `setStringAttribute` / `setIntAttribute` no-op
+/// shims so call sites can attach domain attributes (e.g.
+/// `vulkan.queue_family`, `vulkan.cmd_buffer_count`) without conditional
+/// compilation. Both shims swallow the error union (`!void`) returned
+/// by the real otel API so the call shape `span.setX(...) catch {}`
+/// works under both flag values.
 pub const Span = if (enabled) otel.api.trace.Span else struct {
     pub fn end(self: @This(), _: ?u64) void {
+        _ = self;
+    }
+    pub fn setStringAttribute(self: @This(), _: []const u8, _: []const u8) !void {
+        _ = self;
+    }
+    pub fn setIntAttribute(self: @This(), _: []const u8, _: i64) !void {
         _ = self;
     }
 };

@@ -41,6 +41,7 @@
 //! ```
 
 const std = @import("std");
+const observability = @import("observability");
 
 /// Zig 0.16.0 compat: libc-based monotonic timestamp (ns)
 fn nanoTimestamp() i128 {
@@ -717,6 +718,15 @@ pub const ComputePipeline = struct {
         descriptor_layout: DescriptorSetLayout,
         push_constant_range: ?PushConstantRange,
     ) err.Error!Self {
+        // Pipeline compilation can be high-latency on first invocation
+        // (driver compiles SPIR-V to GPU ISA), so this is a meaningful
+        // span boundary. Per the rollout constraint, no shader bytecode
+        // or pipeline-state details land in span attributes -- only the
+        // seam's default `gpu.system="vulkan"` / `gpu.operation` pair.
+        var __obs_span = observability.startVulkanSpan("pipeline_create");
+        defer __obs_span.end(null);
+        errdefer observability.endVulkanSpan(__obs_span, false);
+
         // Create pipeline layout
         var push_range: types.PushConstantRange = undefined;
         const push_range_ptr: ?[*]const types.PushConstantRange = if (push_constant_range) |pcr| blk: {
@@ -763,6 +773,7 @@ pub const ComputePipeline = struct {
         );
         if (result != .success) return err.fromVkResult(result);
 
+        observability.endVulkanSpan(__obs_span, true);
         return Self{
             .pipeline = pipeline,
             .layout = layout,

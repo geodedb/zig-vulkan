@@ -10,6 +10,7 @@ const types = @import("../vk/types.zig");
 const loader = @import("../vk/loader.zig");
 const err = @import("../vk/error.zig");
 const Context = @import("context.zig").Context;
+const observability = @import("observability");
 
 /// Command buffer wrapper for single-use recording
 pub const CommandBuffer = struct {
@@ -182,6 +183,15 @@ pub const Submission = struct {
         signal_semaphore: ?Semaphore,
         fence: ?Fence,
     ) err.Error!void {
+        var __obs_span = observability.startVulkanSpan("queue_submit");
+        defer __obs_span.end(null);
+        errdefer observability.endVulkanSpan(__obs_span, false);
+        // Cmd-buffer count is always 1 in this submission helper -- attach
+        // the attribute for symmetry with the multi-cmd-buffer paths in
+        // queue.zig. Both calls are `catch {}`-discarded so a failed
+        // attribute write cannot block the GPU submission.
+        __obs_span.setIntAttribute("vulkan.cmd_buffer_count", 1) catch {};
+
         var wait_stage = types.PipelineStageFlags{ .compute_shader = true };
 
         const submit_info = types.SubmitInfo{
@@ -201,12 +211,17 @@ pub const Submission = struct {
             if (fence) |f| f.handle else null,
         );
         if (result != .success) return err.fromVkResult(result);
+        observability.endVulkanSpan(__obs_span, true);
     }
 
     /// Wait for the compute queue to become idle
     pub fn waitQueueIdle(ctx: *Context) err.Error!void {
+        var __obs_span = observability.startVulkanSpan("queue_wait_idle");
+        defer __obs_span.end(null);
+        errdefer observability.endVulkanSpan(__obs_span, false);
         const result = ctx.device_dispatch.vkQueueWaitIdle.?(ctx.compute_queue);
         if (result != .success) return err.fromVkResult(result);
+        observability.endVulkanSpan(__obs_span, true);
     }
 };
 
