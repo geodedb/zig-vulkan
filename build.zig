@@ -88,6 +88,7 @@ pub fn build(b: *std.Build) void {
     // "file exists in modules X and X0" error when two independent
     // `addOptions` modules end up sharing a transitive file path.
     const build_options = b.addOptions();
+    build_options.addOption([]const u8, "package_name", "vulkan");
     build_options.addOption(bool, "with_otel", with_otel);
     const build_options_mod = build_options.createModule();
 
