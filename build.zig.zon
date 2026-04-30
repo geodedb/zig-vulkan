@@ -11,8 +11,8 @@
             .hash = "thread_pool-0.2.1-11B1BsqSdgCqx_EsSPzdPqfGhNFzonijUGYfDuy0fpTb",
         },
         .otel = .{
-            .url = "git+https://gitlab.com/devnw/zig/otel.git#7e014ec8ba14609affc495903293f150643e2382",
-            .hash = "otel-0.1.0-B0v3lrgNNABYMMqtuvc8JP-C7njK9T33jXC2APeGSSsA",
+            .url = "git+https://gitlab.com/devnw/zig/otel.git#efe116b388d43472eaab5b6c24a13725156df417",
+            .hash = "otel-0.1.0-B0v3lrgNNAAbt_xZDbOsBAS1bFFkspiibIElaWuVMK4M",
             .lazy = true,
         },
     },
