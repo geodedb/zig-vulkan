@@ -1,18 +1,18 @@
 .{
     .name = .vulkan,
-    .version = "0.1.0",
+    .version = "0.1.2",
     .minimum_zig_version = "0.16.0",
 
     .fingerprint = 0xbe155a03b5611dce,
 
     .dependencies = .{
         .thread_pool = .{
-            .url = "git+https://gitlab.com/devnw/zig/thread-pool.git#c41388bdab88916bb453a20adae2c722405287d1",
-            .hash = "thread_pool-0.2.1-11B1BsqSdgCqx_EsSPzdPqfGhNFzonijUGYfDuy0fpTb",
+            .url = "git+https://gitlab.com/devnw/zig/thread-pool.git#v0.2.2",
+            .hash = "thread_pool-0.2.2-11B1BsqSdgAdUthtiFxVynrhft3Bv8q7_VLBsF3_z1oH",
         },
         .otel = .{
-            .url = "git+https://gitlab.com/devnw/zig/otel.git#391c5b5db8a63964e0d22eb8ac458b16446dd4b7",
-            .hash = "otel-0.1.0-B0v3lrgNNABxtnyDtlogyBQoO3t7E_M00mEdQIFCpa_F",
+            .url = "git+https://gitlab.com/devnw/zig/otel.git#v0.1.1",
+            .hash = "otel-0.1.1-B0v3lrgLNAANBQdCC0P-otfWu7RDy5SevHHYhKz66olQ",
             .lazy = true,
         },
     },
