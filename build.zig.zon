@@ -1,6 +1,6 @@
 .{
     .name = .vulkan,
-    .version = "0.1.6",
+    .version = "0.1.7",
     .minimum_zig_version = "0.16.0",
 
     .fingerprint = 0xbe155a03b5611dce,
@@ -11,8 +11,8 @@
             .hash = "thread_pool-0.2.4-11B1BnyUdgCUNlqgBwHNvE4plLwP1s1MAyCjODPafrpo",
         },
         .otel = .{
-            .url = "git+https://gitlab.com/devnw/zig/otel.git#455ad2b8fb6888d5dab48a0a5bdcc81fd225f635",
-            .hash = "otel-0.1.5-B0v3lvEMNAC40_D5FfUJgpR3hR8nP5R4IKg31uJmpk-y",
+            .url = "git+https://gitlab.com/devnw/zig/otel.git#v0.1.7",
+            .hash = "otel-0.1.7-B0v3lvwMNABbcgWlpbEityFzWmMeqp2H-G5PKV4YonCx",
             .lazy = true,
         },
     },
