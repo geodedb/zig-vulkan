@@ -351,6 +351,15 @@ pub fn queryCooperativeMatrixCapabilities(ctx: *Context, allocator: std.mem.Allo
     const is_supported = features.cooperative_matrix != 0;
     const robust_access = features.cooperative_matrix_robust_buffer_access != 0;
 
+    // A loader can expose an extension trampoline even when the selected
+    // physical device has no implementation. Never dispatch unsupported
+    // cooperative-matrix queries through that trampoline.
+    if (!is_supported) return .{
+        .cooperative_matrix = false,
+        .robust_buffer_access = robust_access,
+        .configurations = &.{},
+    };
+
     // Query cooperative matrix configurations if the extension function is available
     var configurations: []MatrixConfiguration = &.{};
 
@@ -1691,4 +1700,30 @@ test "PushDescriptorCapabilities" {
         .max_push_descriptors = 0,
     };
     try std.testing.expect(!no_push.isAvailable());
+}
+
+test "unsupported cooperative matrices never call optional driver dispatch" {
+    const Stub = struct {
+        var enumerations: usize = 0;
+        fn features(_: types.PhysicalDevice, output: *types.PhysicalDeviceFeatures2) callconv(.c) void {
+            const matrix: *types.PhysicalDeviceCooperativeMatrixFeaturesKHR = @ptrCast(@alignCast(output.p_next.?));
+            matrix.cooperative_matrix = 0;
+        }
+        fn enumerate(_: types.PhysicalDevice, count: *u32, _: ?[*]types.CooperativeMatrixPropertiesKHR) callconv(.c) types.Result {
+            enumerations += 1;
+            count.* = 0;
+            return .success;
+        }
+    };
+    Stub.enumerations = 0;
+    var ctx: Context = undefined;
+    ctx.physical_device = @ptrFromInt(1);
+    ctx.instance_dispatch = .{
+        .vkGetPhysicalDeviceFeatures2 = Stub.features,
+        .vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR = Stub.enumerate,
+    };
+    const caps = try queryCooperativeMatrixCapabilities(&ctx, std.testing.allocator);
+    try std.testing.expect(!caps.isAvailable());
+    try std.testing.expectEqual(@as(usize, 0), caps.configurations.len);
+    try std.testing.expectEqual(@as(usize, 0), Stub.enumerations);
 }

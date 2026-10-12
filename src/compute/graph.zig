@@ -804,32 +804,32 @@ pub const ComputeGraph = struct {
     /// Find and report a cycle in the task graph for debugging
     /// Reports all tasks that weren't executed (involved in cycles) with their dependencies
     fn reportCycle(self: *Self) void {
-        std.log.err("[ComputeGraph] Cyclic dependency detected!", .{});
-        std.log.err("[ComputeGraph] The following tasks are involved in one or more cycles:", .{});
+        std.log.warn("[ComputeGraph] Cyclic dependency detected!", .{});
+        std.log.warn("[ComputeGraph] The following tasks are involved in one or more cycles:", .{});
 
         // Count and report unexecuted tasks (they're all part of cycles)
         var cycle_count: usize = 0;
         for (self.tasks.items, 0..) |task, i| {
             if (!task.executed) {
                 cycle_count += 1;
-                std.log.err("  - Task {d}: '{s}'", .{ i, task.name });
+                std.log.warn("  - Task {d}: '{s}'", .{ i, task.name });
 
                 // Show what this task depends on
                 if (task.dependencies.items.len > 0) {
                     for (task.dependencies.items) |dep_id| {
                         const dep_task = self.tasks.items[dep_id];
                         const status: []const u8 = if (dep_task.executed) "OK" else "CYCLE";
-                        std.log.err("      depends on: '{s}' [{s}]", .{ dep_task.name, status });
+                        std.log.warn("      depends on: '{s}' [{s}]", .{ dep_task.name, status });
                     }
                 }
             }
         }
 
-        std.log.err("[ComputeGraph] {d} of {d} tasks are stuck in cycles", .{
+        std.log.warn("[ComputeGraph] {d} of {d} tasks are stuck in cycles", .{
             cycle_count,
             self.tasks.items.len,
         });
-        std.log.err("[ComputeGraph] To fix: ensure no task transitively depends on itself", .{});
+        std.log.warn("[ComputeGraph] To fix: ensure no task transitively depends on itself", .{});
     }
 
     fn computeLevels(self: *Self) !void {
