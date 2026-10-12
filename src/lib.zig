@@ -466,10 +466,10 @@ pub const MockOperation = testing.MockOperation;
 pub const version = std.SemanticVersion{
     .major = 0,
     .minor = 1,
-    .patch = 19,
+    .patch = 20,
 };
 
-pub const version_string = "0.1.19";
+pub const version_string = "0.1.20";
 
 // =============================================================================
 // Tests
@@ -483,7 +483,7 @@ test {
 test "library version is valid" {
     try std.testing.expect(version.major == 0);
     try std.testing.expect(version.minor == 1);
-    try std.testing.expect(version.patch == 19);
+    try std.testing.expect(version.patch == 20);
 }
 
 test "isAvailable does not panic" {
