@@ -116,6 +116,18 @@ test:
   needs:
     - build
 
+# SONNY-4874: keep the disabled optional module graph compilable.
+test-serial:
+  stage: test
+  image: debian:bookworm-slim
+  before_script:
+    - *install-zig
+  script:
+    - zig build test -Dthread_pool=false --summary all
+    - zig build test -Dthread_pool=false -Doptimize=ReleaseSafe --summary all
+  needs:
+    - build
+
 # Integration tests
 test-integration:
   stage: test

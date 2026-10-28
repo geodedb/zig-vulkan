@@ -183,8 +183,11 @@ pub const usage_pools = @import("memory/usage_pools.zig");
 pub const batch_command = @import("command/batch.zig");
 pub const shader_variants = @import("pipeline/variants.zig");
 
-/// Parallel operations (requires `thread_pool`).
-pub const parallel = @import("parallel");
+/// Parallel operations (requires `thread_pool`); empty when disabled.
+pub const parallel = if (@import("build_options").thread_pool)
+    @import("parallel")
+else
+    struct {};
 
 // otel observability seam. Surfaces `startVulkanSpan` /
 // `endVulkanSpan` plus the `enabled` flag. When `-Dwith_otel=false`
@@ -492,10 +495,15 @@ test "isAvailable does not panic" {
 }
 
 test "parallel re-export is reachable" {
-    // Smoke test: verify parallel.zig is reachable through the public
-    // vulkan root module. Parallel Vulkan ops need a real VkDevice etc.
-    // which is impractical in a unit test, so we just assert the pool
-    // lifecycle entry points are exposed and `deinitPool()` is safe.
-    _ = @TypeOf(parallel.getPool);
-    parallel.deinitPool();
+    if (@import("build_options").thread_pool) {
+        // Parallel Vulkan ops need a real VkDevice; the lifecycle API
+        // remains reachable and deinitializing an unused pool is safe.
+        _ = @TypeOf(parallel.getPool);
+        parallel.deinitPool();
+    }
+}
+
+test "SONNY-4874 parallel API follows the thread_pool build option" {
+    try std.testing.expectEqual(@import("build_options").thread_pool, @hasDecl(parallel, "getPool"));
+    try std.testing.expectEqual(@import("build_options").thread_pool, @hasDecl(parallel, "deinitPool"));
 }
