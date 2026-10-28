@@ -100,6 +100,10 @@ pub const Options = struct {
     enable_debug_utils: bool = false,
     /// Prefer discrete GPU over integrated
     prefer_discrete: bool = true,
+    /// Reject CPU devices, including an explicit device_index. If no eligible
+    /// compute device remains, initialization returns NoComputeQueue.
+    /// Defaults to false to preserve software Vulkan compatibility.
+    require_non_cpu: bool = false,
     /// Specific device index to use (overrides prefer_discrete)
     device_index: ?u32 = null,
     /// Enable timestamp queries for benchmarking
@@ -118,6 +122,16 @@ pub const Options = struct {
     pub const LogFn = *const fn (Level, []const u8) void;
     pub const Level = enum { debug, info, warn, err };
 };
+
+// A null score makes a device ineligible for both automatic and explicit selection.
+fn deviceScore(device_type: types.PhysicalDeviceType, options: Options) ?i32 {
+    if (options.require_non_cpu and device_type == .cpu) return null;
+    return switch (device_type) {
+        .discrete_gpu => if (options.prefer_discrete) 1000 else 0,
+        .integrated_gpu => if (options.prefer_discrete) 500 else 1000,
+        else => 0,
+    };
+}
 
 /// Result of probing the system for Vulkan availability
 pub const ProbeResult = struct {
@@ -516,6 +530,8 @@ pub const Context = struct {
 
         if (options.device_index) |idx| {
             if (idx < devices.len) {
+                const props = inst_dispatch.getPhysicalDeviceProperties(devices[idx]);
+                if (deviceScore(props.device_type, options) == null) return err.Error.NoComputeQueue;
                 const queue_families = try inst_dispatch.getPhysicalDeviceQueueFamilyProperties(devices[idx], allocator);
                 defer allocator.free(queue_families);
                 for (queue_families, 0..) |qf, qi| {
@@ -544,12 +560,7 @@ pub const Context = struct {
 
                 if (compute_family == null) continue;
 
-                var score: i32 = 0;
-                if (props.device_type == .discrete_gpu) {
-                    score += if (options.prefer_discrete) 1000 else 0;
-                } else if (props.device_type == .integrated_gpu) {
-                    score += if (!options.prefer_discrete) 1000 else 500;
-                }
+                const score = deviceScore(props.device_type, options) orelse continue;
 
                 if (score > best_score) {
                     best_score = score;
@@ -849,8 +860,19 @@ test "ProbeResult.isAvailable" {
     try std.testing.expect(!result.isAvailable());
 }
 
+test "SONNY-4966 strict selection rejects CPU without changing default scores" {
+    try std.testing.expectEqual(@as(?i32, 0), deviceScore(.cpu, .{}));
+    try std.testing.expectEqual(@as(?i32, null), deviceScore(.cpu, .{ .require_non_cpu = true }));
+    try std.testing.expectEqual(@as(?i32, 1000), deviceScore(.discrete_gpu, .{ .require_non_cpu = true }));
+    try std.testing.expectEqual(@as(?i32, 500), deviceScore(.integrated_gpu, .{ .require_non_cpu = true }));
+    try std.testing.expectEqual(@as(?i32, 0), deviceScore(.discrete_gpu, .{ .prefer_discrete = false }));
+    try std.testing.expectEqual(@as(?i32, 1000), deviceScore(.integrated_gpu, .{ .prefer_discrete = false }));
+    try std.testing.expectEqual(@as(?i32, 0), deviceScore(.virtual_gpu, .{ .require_non_cpu = true }));
+}
+
 test "Options defaults" {
     const opts = Options{};
+    try std.testing.expect(!opts.require_non_cpu);
     try std.testing.expect(!opts.enable_validation);
     try std.testing.expect(opts.prefer_discrete);
     try std.testing.expectEqual(opts.device_index, null);

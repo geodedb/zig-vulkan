@@ -73,6 +73,42 @@ test "create and destroy context" {
     });
 }
 
+// SONNY-4966: exercise the real dispatch path, not only the score helper.
+test "SONNY-4966 CPU fallback is compatible but strict selection refuses it" {
+    var result = vulkan.probe(std.testing.allocator);
+    defer result.deinit(std.testing.allocator);
+    if (!result.isAvailable()) return error.SkipZigTest;
+
+    var cpu_index: ?u32 = null;
+    var has_non_cpu_compute = false;
+    for (result.devices) |dev| {
+        if (!dev.has_compute_queue) continue;
+        if (dev.device_type == .cpu) {
+            cpu_index = dev.index;
+        } else {
+            has_non_cpu_compute = true;
+        }
+    }
+    const index = cpu_index orelse return error.SkipZigTest;
+    {
+        var compatible = try vulkan.Context.init(std.testing.allocator, .{ .device_index = index });
+        defer compatible.deinit();
+        try std.testing.expectEqual(vulkan.vk.PhysicalDeviceType.cpu, compatible.deviceInfo().device_type);
+    }
+    try std.testing.expectError(vulkan.Error.NoComputeQueue, vulkan.Context.init(std.testing.allocator, .{
+        .device_index = index,
+        .require_non_cpu = true,
+    }));
+    if (!has_non_cpu_compute) {
+        var compatible = try vulkan.Context.init(std.testing.allocator, .{});
+        defer compatible.deinit();
+        try std.testing.expectEqual(vulkan.vk.PhysicalDeviceType.cpu, compatible.deviceInfo().device_type);
+        try std.testing.expectError(vulkan.Error.NoComputeQueue, vulkan.Context.init(std.testing.allocator, .{
+            .require_non_cpu = true,
+        }));
+    }
+}
+
 // Test buffer creation
 test "create and use buffers" {
     if (!vulkan.isAvailable()) {
