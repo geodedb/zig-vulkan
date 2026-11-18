@@ -469,7 +469,7 @@ pub const version = std.SemanticVersion{
     .patch = 20,
 };
 
-pub const version_string = "0.1.20";
+pub const version_string = "0.1.21";
 
 // =============================================================================
 // Tests
